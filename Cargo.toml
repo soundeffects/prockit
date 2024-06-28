@@ -1,0 +1,31 @@
+[package]
+name = "project_gate"
+version = "0.1.0"
+edition = "2021"
+categories = ["game-engines", "graphics", "rendering"]
+description = "Experiments with volumetric, raymarching, and 'rasterless' rendering which may eventually become a game platform."
+exclude = [".github/", "crates/", "assets/"]
+keywords = ["raymarching", "game", "engine", "graphics", "bevy"]
+license = "MIT OR Apache-2.0"
+repository = "placeholder"
+documentation = "placeholder"
+rust-version = "1.78.0"
+
+[dependencies]
+bevy = "0.13"
+lodtree = "0.1"
+ndshape = "0.3"
+bevy_console = "0.11"
+clap = "4.5"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.bevy]
+features = ["dynamic_linking"]
+
+[profile.release]
+opt-level = 3
+
+[workspace]
+members = ["crates/*"]
