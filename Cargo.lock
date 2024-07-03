@@ -2543,12 +2543,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lodtree"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bac472b23f3cfd6129bf76f003ec7c7c4f72a99b7ce3cf491e17b73651d6d4e"
-
-[[package]]
 name = "log"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3186,8 +3180,8 @@ dependencies = [
  "bevy",
  "bevy_console",
  "clap",
- "lodtree",
  "ndshape",
+ "voxel_store",
 ]
 
 [[package]]
@@ -3818,6 +3812,8 @@ name = "voxel_store"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_console",
+ "clap",
  "ndshape",
 ]
 

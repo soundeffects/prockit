@@ -1,14 +1,11 @@
 use bevy::prelude::*;
-
-mod voxel_store;
-use bevy_console::{AddConsoleCommand, ConsolePlugin};
-use voxel_store::{store_info_command, StoreInfoCommand, VoxelStore};
+use bevy_console::ConsolePlugin;
+use voxel_store::prelude::*;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, ConsolePlugin))
+        .add_plugins((DefaultPlugins, ConsolePlugin, VoxelStoreCommandPlugin))
         .add_systems(Startup, setup)
-        .add_console_command::<StoreInfoCommand, _>(store_info_command)
         .run();
 }
 
@@ -36,7 +33,7 @@ fn setup(
         ..default()
     });
 
-    let mut voxel_store = VoxelStore::new();
-    voxel_store.generate_disc(256, 32);
+    let voxel_store = VoxelStore::new();
+    voxel_store.write(-10..10, -10..10, -10..10, Sampler);
     commands.spawn((voxel_store, Name::new("Main World")));
 }
