@@ -1,14 +1,38 @@
 [package]
-name = "triless"
+name = "rasterless"
 version = "0.1.0"
 edition = "2021"
+categories = ["game-engines", "graphics", "rendering"]
+description = "Experiments with volumetric, raymarching, and 'rasterless' rendering which may eventually become a game platform."
+exclude = [".github/", "crates/", "assets/"]
+keywords = ["raymarching", "game", "engine", "graphics", "bevy"]
+license = "MIT OR Apache-2.0"
+repository = "placeholder"
+documentation = "placeholder"
+rust-version = "1.78.0"
 
 [dependencies]
-wgpu = "0.20"
+bevy = "0.13"
+ndshape = "0.3"
+bevy_console = "0.11"
+clap = "4.5"
+voxel_store = { path = "./crates/voxel_store", version = "0.1", features = ["bevy_console"] }
 
-[dependencies.bevy]
-version = "0.13"
-default-features = false
-features = [
-  "bevy_winit"
-]
+[profile.dev.package.bevy]
+opt-level = 2
+features = ["dynamic_linking"]
+
+[profile.dev.package.ndshape]
+opt-level = 2
+
+[profile.dev.package.bevy_console]
+opt-level = 2
+
+[profile.dev.package.clap]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+
+[workspace]
+members = ["crates/*"]

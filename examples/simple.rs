@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use triless::{Ellipsoid, TrilessRenderPlugin};
+use rasterless::{Ellipsoid, TrilessRenderPlugin};
 
 fn main() {
     App::new()
