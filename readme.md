@@ -14,4 +14,9 @@ may be informative to a visitor!
 - For an example of a custom bevy rendering pipeline: https://github.com/Lommix/bevy_pipeline_example/blob/master/src/render.rs
 - For a presentation on GPU driven rendering pipelines: https://advances.realtimerendering.com/s2015/aaltonenhaar_siggraph2015_combined_final_footer_220dpi.pdf
 - Collection of graphics articles: https://www.jendrikillner.com/#about
-- wgpu raytracers: https://github.com/jgrazian/wgpu-raytracer, https://github.com/albedo-engine/albedo/tree/main
+- wgpu raytracers: https://github.com/jgrazian/wgpu-raytracer, https://github.com/albedo-engine/albedo/tree/main, https://github.com/oxabz/wgpu-raymarcher/tree/main
+- bevy_render internals: https://github.com/bevyengine/bevy/tree/main/crates/bevy_render
+- Summary of bevy's rendering plugins: https://hackmd.io/@nth/rendering_summary
+- Data between CPU and GPU: https://github.com/schell/crabslab
+- GPU driven renderers, wgpu: https://github.com/schell/renderling, https://github.com/pudnax/voidin
+- compute shaders in bevy: https://odysee.com/@LogicProjects:4/compute-shaders-in-bevy:a
