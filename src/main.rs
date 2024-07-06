@@ -1,10 +1,13 @@
-use bevy::prelude::*;
-use bevy_console::ConsolePlugin;
+use bevy::{diagnostic::LogDiagnosticsPlugin, prelude::*};
 use voxel_store::prelude::*;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, ConsolePlugin, VoxelStoreCommandPlugin))
+        .add_plugins((
+            DefaultPlugins,
+            LogDiagnosticsPlugin::default(),
+            VoxelStoreDiagnosticsPlugin,
+        ))
         .add_systems(Startup, setup)
         .run();
 }
@@ -29,11 +32,14 @@ fn setup(
     // Central Cube
     commands.spawn(PbrBundle {
         mesh: meshes.add(Cuboid::from_size(Vec3::ONE)),
-        material: materials.add(Color::RED),
+        material: materials.add(StandardMaterial {
+            base_color: Srgba::rgb(1.0, 0.0, 0.0).into(),
+            ..default()
+        }),
         ..default()
     });
 
-    let voxel_store = VoxelStore::new();
+    let mut voxel_store = VoxelStore::new();
     voxel_store.write(-10..10, -10..10, -10..10, Sampler);
     commands.spawn((voxel_store, Name::new("Main World")));
 }
