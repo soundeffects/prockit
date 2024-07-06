@@ -14,9 +14,12 @@ rust-version = "1.78.0"
 [dependencies]
 bevy = "0.14"
 ndshape = "0.3"
-bevy_console = "0.11"
-clap = "4.5"
+wgpu = "0.20"
+winit = "0.30"
+log = "0.4"
 voxel_store = { path = "./crates/voxel_store", version = "0.1", features = ["bevy"] }
+env_logger = "0.11"
+pollster = "0.3"
 
 [profile.dev.package.bevy]
 opt-level = 2
