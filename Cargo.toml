@@ -9,10 +9,8 @@ keywords = ["raymarching", "game", "engine", "graphics", "bevy"]
 license = "MIT OR Apache-2.0"
 repository = "placeholder"
 documentation = "placeholder"
-rust-version = "1.78.0"
 
 [dependencies]
-bevy = "0.14"
 ndshape = "0.3"
 wgpu = "0.20"
 winit = "0.30"
@@ -20,18 +18,40 @@ log = "0.4"
 voxel_store = { path = "./crates/voxel_store", version = "0.1", features = ["bevy"] }
 env_logger = "0.11"
 pollster = "0.3"
+glam = "0.28"
+bytemuck = "1.16"
+encase = { version = "0.9", features = ["glam"] }
+
+[dependencies.bevy]
+version = "0.14"
+default-features = false
+features = [
+    "bevy_animation",
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_color",
+    "bevy_gilrs",
+    "bevy_scene",
+    "bevy_state",
+    "bevy_ui",
+    "bevy_winit",
+    "default_font",
+    "multi_threaded",
+    "png",
+    "ktx2",
+    "smaa_luts",
+    "hdr",
+    "tonemapping_luts",
+    "vorbis",
+    "x11",
+    "zstd"
+]
 
 [profile.dev.package.bevy]
 opt-level = 2
 features = ["dynamic_linking"]
 
-[profile.dev.package.ndshape]
-opt-level = 2
-
-[profile.dev.package.bevy_console]
-opt-level = 2
-
-[profile.dev.package.clap]
+[profile.dev.package.'*']
 opt-level = 2
 
 [profile.release]
