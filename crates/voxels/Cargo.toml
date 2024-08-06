@@ -1,18 +1,20 @@
 [package]
-name = "voxel_store"
+name = "prockit_voxels"
 version = "0.1.0"
 edition = "2021"
-categories = ["graphics", "rendering"]
+categories = ["game-development", "graphics", "rendering"]
 description = "A flexible volumetric data structure for rendering and storage purposes."
 keywords = ["voxel", "volumetric", "vdb", "rendering"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/soundeffects/rasterless"
+repository = "placeholder"
 documentation = "placeholder"
 
 [dependencies]
 ndshape = "0.3"
-glam = "0.28"
-bevy = { version = "0.14", optional = true }
+bevy = "0.14"
+bevy_console = { git = "https://github.com/msklosak/bevy-console.git", branch = "bevy_014", optional = true }
+clap = { version = "4.5", optional = true }
+priority-queue = "2.0"
 
 [profile.dev.package."*"]
 opt-level = 2
@@ -24,4 +26,4 @@ features = ["dynamic_linking"]
 opt-level = 3
 
 [features]
-bevy = ["dep:bevy"]
+bevy_console = ["dep:bevy_console", "dep:clap"]

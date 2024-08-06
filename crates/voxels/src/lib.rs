@@ -1,5 +1,5 @@
-// █   █ ██▄   █▀▄ ▄▀▀
-// █▄▄ █ █▄█ ▄ █▀▄ ▄██
+// █▀▄ █▀▄ ▄▀▄ ▄▀▀ █▄▀ █ ▀█▀    █ █ ▄▀▄ ▀▄▀ ██▀ █   ▄▀▀
+// █▀  █▀▄ ▀▄▀ ▀▄▄ █ █ █  █  ▄▄ ▀▄▀ ▀▄▀ █ █ █▄▄ █▄▄ ▄██
 
 //! Simple voxel data storage. There are many solutions for volumetric data,
 //! but this crate optimizes for three main goals.
@@ -47,25 +47,12 @@
 //! with the Bevy game engine. This includes basic info, events, and component
 //! declarations for `VoxelStore` structs.
 
-#![deny(missing_docs)]
-#![deny(rustdoc::all)]
+#![deny(missing_docs, rustdoc::all)]
+
+use bevy::prelude::*;
 
 mod chunk;
-mod sampler;
+mod gizmos;
 mod voxel;
-mod voxel_store;
 
-#[cfg(feature = "bevy")]
-mod bevy;
-
-/// The prelude module provides a single import for all user-facing types and
-/// methods in the `voxel_store` crate. All users of the crate should import
-/// `voxel_store::prelude::*`.
-pub mod prelude {
-    pub use crate::sampler::Sampler;
-    pub use crate::voxel::Voxel;
-    pub use crate::voxel_store::VoxelStore;
-
-    #[cfg(feature = "bevy")]
-    pub use crate::bevy::*;
-}
+pub use chunk::{ChunkViewer, MeshingChunk};

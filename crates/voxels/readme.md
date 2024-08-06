@@ -1,4 +1,9 @@
-# voxel_store
+# prockit_voxels
+
+
+The following is placeholder!
+
+
 Simple voxel data storage. There are many solutions for volumetric data,
 but this crate optimizes for three main goals.
 

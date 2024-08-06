@@ -2,10 +2,12 @@ use crate::camera::Camera;
 use bytemuck::cast_slice;
 use glam::Vec3;
 use log::info;
-use std::{borrow::Cow, error::Error, sync::Arc};
+use std::{error::Error, sync::Arc};
 use util::{BufferInitDescriptor, DeviceExt};
 use wgpu::*;
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
+
+const GIGABYTE: usize = 1073741824;
 
 /// The `Graphics` object is a container for all the context and functionality related to rendering in
 /// the `rasterless` engine. Creating the `Graphics` object will grab the GPU device and set up the
@@ -22,6 +24,7 @@ pub(crate) struct Graphics {
     window: Arc<Window>,
     camera: Camera,
     camera_uniform: Buffer,
+    voxel_store: Buffer,
     surface: Surface<'static>,
     device: Device,
     queue: Queue,
@@ -83,7 +86,14 @@ impl Graphics {
                     // to storage textures, and and using a texture of this format as a storage
                     // texture is not allowed without this feature.
                     required_features: Features::BGRA8UNORM_STORAGE,
-                    required_limits: Limits::default(),
+                    required_limits: Limits {
+                        // We need to allocate buffers of at least 1GB in size--the primary example
+                        // of such a buffer being the voxel storage buffer used during raymarching.
+                        // Thus, we set specify a maximum buffer size of 1GB.
+                        max_buffer_size: GIGABYTE as u64,
+                        max_storage_buffer_binding_size: GIGABYTE as u32,
+                        ..Default::default()
+                    },
                 },
                 None,
             )
@@ -110,8 +120,8 @@ impl Graphics {
         };
         surface.configure(&device, &config);
 
-        // Create raymarching (compute pass) pipeline
-        // ------------------------------------------
+        // Initialize buffers
+        // ------------------
         let camera_position = Vec3::new(0.0, 3.0, -3.0);
         let camera = Camera::new(
             camera_position,
@@ -119,22 +129,31 @@ impl Graphics {
             Vec3::Y,
             90.0,
             100.0,
-            current_size.width,
-            current_size.height,
+            current_size,
         );
 
         let camera_uniform = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Camera Uniform Buffer"),
-            contents: &camera.to_uniform_data(),
+            contents: cast_slice(&camera.to_uniform_data()),
             // Add the copy destionation usage so that we can send write_buffer commands for
             // when the camera object changes.
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
-        let raymarch_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Raymarch (Compute Pass) Shader"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute.wgsl"))),
+        let voxel_store = device.create_buffer(&BufferDescriptor {
+            label: Some("Voxel Storage Buffer"),
+            size: GIGABYTE as u64,
+            // We want a large buffer, which means we must initialize this buffer as a storage buffer,
+            // and we want to write to it from the CPU, which means we need the MAP_WRITE flag.
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: true,
         });
+
+        queue.write_buffer(&voxel_store, 0, &[0u8, 1u8, 2u8, 3u8]);
+
+        // Create raymarching (compute pass) pipeline
+        // ------------------------------------------
+        let raymarch_shader = device.create_shader_module(include_wgsl!("compute.wgsl"));
 
         let raymarch_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -159,6 +178,16 @@ impl Graphics {
                             access: StorageTextureAccess::WriteOnly,
                             format: TextureFormat::Bgra8Unorm,
                             view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
                     },
@@ -188,6 +217,7 @@ impl Graphics {
             window,
             camera,
             camera_uniform,
+            voxel_store,
             surface,
             device,
             queue,
@@ -265,6 +295,10 @@ impl Graphics {
                             ..Default::default()
                         },
                     )),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.voxel_store.as_entire_binding(),
                 },
             ],
         });
