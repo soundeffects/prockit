@@ -1,0 +1,12 @@
+[package]
+name = "raymarks"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.11.5"
+flume = "0.11.1"
+log = "0.4.22"
+png = "0.17.15"
+pollster = "0.4.0"
+wgpu = "23.0.1"
