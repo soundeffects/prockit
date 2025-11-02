@@ -1,0 +1,69 @@
+# Bevy Crates To Be Aware Of
+## Dense Bevy Crates, Relative To API Surface Area
+- [x] `bevy_math` (184KB)
+- [x] `bevy_reflect` (183KB)
+- [ ] `bevy_ecs` (594KB)
+- [ ] `bevy_asset` (147KB)
+- [ ] `bevy_ui` (122KB)
+- [ ] `bevy_render` (262KB)
+- [ ] `bevy_core_pipeline` (726KB)
+- [ ] `bevy_pbr` (589KB)
+
+## All Bevy Crates, Topologically Sorted
+- `bevy_android` (1KB)
+- `bevy_derive` (10KB)
+- `bevy_ptr` (13KB)
+- `bevy_platform` (27KB)
+- ! `bevy_math` (184KB)
+- `bevy_utils` (13KB) depends on `bevy_platform`
+- `bevy_tasks` (36KB) depends on `bevy_platform`
+- ! `bevy_reflect` (183KB) depends on `bevy_utils`, `bevy_ptr`, `bevy_platform`
+- `bevy_color` (53KB) depends on `bevy_reflect`, `bevy_math`
+- ! `bevy_ecs` (594KB) depends on `bevy_ptr`, `bevy_reflect`, `bevy_tasks`, `bevy_utils`, `bevy_platform`
+- `bevy_app` (47KB) depends on `bevy_derive`, `bevy_ecs`, `bevy_reflect`, `bevy_utils`, `bevy_tasks`, `bevy_platform`
+- `bevy_state` (32KB) depends on `bevy_ecs`, `bevy_utils`, `bevy_reflect`, `bevy_app`, `bevy_platform`
+- ! `bevy_asset` (147KB) depends on `bevy_app`, `bevy_ecs`, `bevy_reflect`, `bevy_tasks`, `bevy_utils`, `bevy_platform`
+- `bevy_time` (32KB) depends on `bevy_app`, `bevy_ecs`, `bevy_reflect`, `bevy_platform`
+- `bevy_audio` (37KB) depends on `bevy_app`, `bevy_asset`, `bevy_ecs`, `bevy_math`, `bevy_reflect`, `bevy_transform`
+- `bevy_shader` (Small, ?KB) depends on `bevy_asset`, `bevy_reflect`, `bevy_platform`
+- `bevy_image` (56KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_ecs`, `bevy_math`, `bevy_reflect`, `bevy_utils`, `bevy_platform`
+- `bevy_text` (62KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_derive`, `bevy_ecs`, `bevy_image`, `bevy_log`, `bevy_math`, `bevy_reflect`, `bevy_utils`, `bevy_platform`
+- `bevy_transform` (37KB) depends on `bevy_app`, `bevy_ecs`, `bevy_log`, `bevy_math`, `bevy_reflect`, `bevy_tasks`, `bevy_utils`
+- `bevy_mesh` (66KB) depends on `bevy_app`, `bevy_asset`, `bevy_image`, `bevy_math`, `bevy_reflect`, `bevy_ecs`, `bevy_transform`, `bevy_derive`, `bevy_platform`
+- `bevy_camera` (1KB) depends on `bevy_app`, `bevy_asset`, `bevy_image`, `bevy_mesh`, `bevy_math`, `bevy_reflect`, `bevy_ecs`, `bevy_transform`, `bevy_derive`, `bevy_utils`, `bevy_color`, `bevy_window`
+- `bevy_scene` (49KB) depends on `bevy_app`, `bevy_asset`, `bevy_derive`, `bevy_ecs`, `bevy_reflect`, `bevy_transform`, `bevy_utils`, `bevy_camera`, `bevy_platform`
+- `bevy_light` (Slightly small, ?KB) depends on `bevy_app`, `bevy_asset`, `bevy_image`, `bevy_mesh`, `bevy_math`, `bevy_reflect`, `bevy_camera`, `bevy_ecs`, `bevy_transform`, `bevy_utils`, `bevy_platform`, `bevy_color`
+- `bevy_animation` (60KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_derive`, `bevy_math`, `bevy_mesh`, `bevy_reflect`, `bevy_time`, `bevy_utils`, `bevy_ecs`, `bevy_transform`, `bevy_platform`
+- `bevy_diagnostic` (23KB) depends on `bevy_app`, `bevy_ecs`, `bevy_time`, `bevy_tasks`, `bevy_platform`
+- `bevy_log` (23KB) depends on `bevy_app`, `bevy_utils`, `bevy_platform`, `bevy_ecs`
+- `bevy_a11y` (14KB) depends on `bevy_app`, `bevy_derive`, `bevy_ecs`, `bevy_reflect`
+- `bevy_input` (56KB) depends on `bevy_app`, `bevy_ecs`, `bevy_math`, `bevy_reflect`, `bevy_platform`
+- `bevy_gilrs` (20KB) depends on `bevy_app`, `bevy_ecs`, `bevy_input`, `bevy_time`, `bevy_platform`
+- `bevy_window` (38KB) depends on `bevy_app`, `bevy_ecs`, `bevy_input`, `bevy_math`, `bevy_platform`
+- `bevy_picking` (55KB) depends on `bevy_app`, `bevy_asset`, `bevy_derive`, `bevy_ecs`, `bevy_input`, `bevy_math`, `bevy_mesh`, `bevy_camera`, `bevy_reflect`, `bevy_time`, `bevy_transform`, `bevy_window`, `bevy_platform`
+- `bevy_sprite` (73KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_ecs`, `bevy_image`, `bevy_camera`, `bevy_mesh`, `bevy_math`, `bevy_picking`, `bevy_reflect`, `bevy_transform`, `bevy_window`, `bevy_derive`, `bevy_text`
+- ! `bevy_ui` (122KB) depends on `bevy_a11y`, `bevy_app`, `bevy_asset`, `bevy_camera`, `bevy_color`, `bevy_derive`, `bevy_ecs`, `bevy_image`, `bevy_input`, `bevy_math`, `bevy_reflect`, `bevy_sprite`, `bevy_text`, `bevy_picking`, `bevy_transform`, `bevy_window`, `bevy_utils`, `bevy_platform`
+- `bevy_core_widgets` (Small, ?KB) depends on `bevy_app`, `bevy_a11y`, `bevy_ecs`, `bevy_input`, `bevy_input_focus`, `bevy_log`, `bevy_Math`, `bevy_picking`, `bevy_reflect`, `bevy_ui`
+- `bevy_input_focus` (28KB) depends on `bevy_app`, `bevy_ecs`, `bevy_input`, `bevy_math`, `bevy_picking`, `bevy_window`
+- `bevy_winit` (64KB) depends on `bevy_a11y`, `bevy_app`, `bevy_derive`, `bevy_ecs`, `bevy_input`, `bevy_input_focus`, `bevy_log`, `bevy_math`, `bevy_reflect`, `bevy_window`, `bevy_tasks`, `bevy_platform`
+- ! `bevy_render` (262KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_derive`, `bevy_diagnostic`, `bevy_ecs`, `bevy_math`, `bevy_reflect`, `bevy_time`, `bevy_transform`, `bevy_window`, `bevy_utils`, `bevy_tasks`, `bevy_image`, `bevy_mesh`, `bevy_camera`, `bevy_shader`, `bevy_platform`
+- `bevy_gltf` (55KB) depends on `bevy_animation`, `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_ecs`, `bevy_image`, `bevy_light`, `bevy_camera`, `bevy_math`, `bevy_mesh`, `bevy_pbr`, `bevy_reflect`, `bevy_render`, `bevy_scene`, `bevy_transform`, `bevy_tasks`, `bevy_platform`
+- ! `bevy_core_pipeline` (726KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_derive`, `bevy_ecs`, `bevy_image`, `bevy_camera`, `bevy_reflect`, `bevy_shader`, `bevy_render`, `bevy_transform`, `bevy_math`, `bevy_utils`, `bevy_window`, `bevy_platform`
+- `bevy_post_process` (Medium, ?KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_core_pipeline`, `bevy_derive`, `bevy_ecs`, `bevy_image`, `bevy_camera`, `bevy_reflect`, `bevy_shader`, `bevy_render`, `bevy_transform`, `bevy_math`, `bevy_utils`, `bevy_window`, `bevy_platform`
+- ! `bevy_pbr` (589KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_core_pipeline`, `bevy_derive`, `bevy_diagnostic`, `bevy_ecs`, `bevy_light`, `bevy_image`, `bevy_mesh`, `bevy_shader`, `bevy_math`, `bevy_reflect`, `bevy_render`, `bevy_camera`, `bevy_tasks`, `bevy_transform`, `bevy_utils`, `bevy_platform`
+- `bevy_sprite_render` (Medium, ?KB) depends on `bevy_app`, `bevy_asset`, `bevy_color`, `bevy_core_pipeline`, `bevy_ecs`, `bevy_image`, `bevy_camera`, `bevy_mesh`, `bevy_math`, `bevy_shader`, `bevy_sprite`, `bevy_text`, `bevy_reflect`, `bevy_render`, `bevy_transform`, `bevy_utils`, `bevy_derive`, `bevy_platform`
+- `bevy_gizmos` (65KB) depends on `bevy_pbr`, `bevy_sprite`, `bevy_sprite_render`, `bevy_app`, `bevy_camera`, `bevy_light`, `bevy_color`, `bevy_ecs`, `bevy_image`, `bevy_mesh`, `bevy_math`, `bevy_asset`, `bevy_shader`, `bevy_render`, `bevy_utils`, `bevy_reflect`, `bevy_core_pipeline`, `bevy_transform`, `bevy_time`
+- `bevy_ui_render` (Slightly small, ?KB) depends on `bevy_app`, `bevy_asset`, `bevy_camera`, `bevy_color`, `bevy_core_pipeline`, `bevy_derive`, `bevy_ecs`, `bevy_image`, `bevy_math`, `bevy_mesh`, `bevy_reflect`, `bevy_shader`, `bevy_render`, `bevy_sprite`, `bevy_sprite_render`, `bevy_transform`, `bevy_utils`, `bevy_platform`, `bevy_ui`, `bevy_text`
+- `bevy_feathers` (Medium, ?KB) depends on `bevy_a11y`, `bevy_app`, `bevy_asset`, `bevy_camera`, `bevy_color`, `bevy_core_widgets`, `bevy_ecs`, `bevy_input_focus`, `bevy_log`, `bevy_math`, `bevy_picking`, `bevy_shader`, `bevy_platform`, `bevy_reflect`, `bevy_render`, `bevy_text`, `bevy_ui`, `bevy_ui_render`, `bevy_window`
+- `bevy_dev_tools` (34KB) depends on `bevy_app`, `bevy_asset`, `bevy_camera`, `bevy_color`, `bevy_diagnostic`, `bevy_ecs`, `bevy_math`, `bevy_picking`, `bevy_render`, `bevy_reflect`, `bevy_time`, `bevy_text`, `bevy_shader`, `bevy_ui`, `bevy_ui_render`, `bevy_window`, `bevy_state`
+- `bevy_anti_alias` (Slightly small, ?KB) depends on `bevy_asset`, `bevy_reflect`, `bevy_render`, `bevy_camera`, `bevy_math`, `bevy_utils`, `bevy_app`, `bevy_image`, `bevy_derive`, `bevy_shader`, `bevy_ecs`, `bevy_core_pipeline`, `bevy_diagnostic`
+- `bevy_solari` (Medium, ?KB) depends on `bevy_anti_alias`, `bevy_app`, `bevy_asset`, `bevy_camera`, `bevy_color`, `bevy_core_pipeline`, `bevy_derive`, `bevy_diagnostic`, `bevy_ecs`, `bevy_shader`, `bevy_math`, `bevy_mesh`, `bevy_pbr`, `bevy_platform`, `bevy_reflect`, `bevy_render`, `bevy_image`, `bevy_utils`, `bevy_transform`
+
+## Notable Third Party Crates
+- Avian Physics
+- Big Space
+- Bevy Hikari
+- Leafwing Input Manager
+- Bevy Mod Scripting
+- Renderling
+- screen-13

@@ -1,29 +1,40 @@
 [package]
-name = "prockit_voxels"
+name = "prockit"
 version = "0.1.0"
-edition = "2021"
-categories = ["game-development", "graphics", "rendering"]
-description = "A flexible volumetric data structure for rendering and storage purposes."
-keywords = ["voxel", "volumetric", "vdb", "rendering"]
-license = "MIT OR Apache-2.0"
-repository = "placeholder"
+edition = "2024"
+categories = ["game-engines", "game-development", "graphics", "rendering"]
+description = "A set of tools for procedurally generating assets and scenes for game development."
+exclude = [".github/", "crates/", "assets/"]
+keywords = ["game", "engine", "graphics", "bevy"]
+license = "LGPL-3.0-or-greater"
+repository = "https://github.com/soundeffects/prockit"
 documentation = "placeholder"
 
 [dependencies]
-ndshape = "0.3"
-bevy = "0.14"
-bevy_console = { git = "https://github.com/msklosak/bevy-console.git", branch = "bevy_014", optional = true }
-clap = { version = "4.5", optional = true }
-priority-queue = "2.0"
+bevy = { version = "0.17", features = ["trace"] }
+noiz = "0.3.0"
+rand = "0.9.2"
 
-[profile.dev.package."*"]
-opt-level = 2
+[dev-dependencies]
+criterion = "0.7"
+
+[profile.dev]
+opt-level = 1
 
 [profile.dev.package.bevy]
 features = ["dynamic_linking"]
 
-[profile.release]
+[profile.dev.package.'*']
 opt-level = 3
 
-[features]
-bevy_console = ["dep:bevy_console", "dep:clap"]
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+
+[workspace]
+members = ["crates/*"]
+
+[[bench]]
+name = "chunk"
+harness = false
