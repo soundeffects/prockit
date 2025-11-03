@@ -1,13 +1,12 @@
 [package]
-name = "prockit"
+name = "prockit_voxels"
 version = "0.1.0"
 edition = "2024"
 categories = ["game-engines", "game-development", "graphics", "rendering"]
 description = "A set of tools for procedurally generating assets and scenes for game development."
-exclude = [".github/", "crates/", "assets/"]
 keywords = ["game", "engine", "graphics", "bevy"]
 license = "LGPL-3.0-or-greater"
-repository = "https://github.com/soundeffects/prockit"
+repository = "https://github.com/soundeffects/prockit/tree/main/crates/voxels"
 documentation = "placeholder"
 
 [dependencies]
@@ -31,9 +30,6 @@ opt-level = 3
 codegen-units = 1
 lto = "thin"
 opt-level = 3
-
-[workspace]
-members = ["crates/*"]
 
 [[bench]]
 name = "chunk"

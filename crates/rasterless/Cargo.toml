@@ -1,5 +1,5 @@
 [package]
-name = "rasterless"
+name = "prockit_rasterless"
 version = "0.1.0"
 edition = "2021"
 categories = ["game-engines", "graphics", "rendering"]
@@ -14,7 +14,6 @@ ndshape = "0.3"
 wgpu = "0.20"
 winit = "0.30"
 log = "0.4"
-prockit_voxels = { path = "../voxels", version = "0.1" }
 env_logger = "0.11"
 pollster = "0.3"
 glam = "0.28"

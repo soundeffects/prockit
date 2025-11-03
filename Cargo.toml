@@ -34,7 +34,3 @@ opt-level = 3
 
 [workspace]
 members = ["crates/*"]
-
-[[bench]]
-name = "chunk"
-harness = false
