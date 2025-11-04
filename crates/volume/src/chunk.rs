@@ -1,8 +1,16 @@
-use bevy::prelude::*;
+use bevy::{
+    asset::RenderAssetUsages,
+    mesh::{Indices, PrimitiveTopology},
+    prelude::*,
+};
+use std::ops::{Add, Mul, Sub};
 
-// TODO
-// make chunks all allocate their memory in the same shared pool
+const CHUNK_LENGTH: usize = 16;
+const INNER_LENGTH: usize = CHUNK_LENGTH - 1;
+const HALF_LENGTH: usize = CHUNK_LENGTH / 2;
+const CHUNK_SIZE: usize = CHUNK_LENGTH * CHUNK_LENGTH * CHUNK_LENGTH;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Octant {
     NxNyNz,
     NxNyPz,
@@ -12,40 +20,6 @@ enum Octant {
     PxNyPz,
     PxPyNz,
     PxPyPz,
-}
-
-impl From<&Octant> for UVec3 {
-    fn from(octant: &Octant) -> UVec3 {
-        match octant {
-            Octant::NxNyNz => UVec3::new(0, 0, 0),
-            Octant::NxNyPz => UVec3::new(0, 0, 1),
-            Octant::NxPyNz => UVec3::new(0, 1, 0),
-            Octant::NxPyPz => UVec3::new(0, 1, 1),
-            Octant::PxNyNz => UVec3::new(1, 0, 0),
-            Octant::PxNyPz => UVec3::new(1, 0, 1),
-            Octant::PxPyNz => UVec3::new(1, 1, 0),
-            Octant::PxPyPz => UVec3::new(1, 1, 1),
-        }
-    }
-}
-
-impl From<UVec3> for Octant {
-    fn from(position: UVec3) -> Octant {
-        match (
-            (position.x % 2) != 0,
-            (position.y % 2) != 0,
-            (position.z % 2) != 0,
-        ) {
-            (false, false, false) => Octant::NxNyNz,
-            (false, false, true) => Octant::NxNyPz,
-            (false, true, false) => Octant::NxPyNz,
-            (false, true, true) => Octant::NxPyPz,
-            (true, false, false) => Octant::PxNyNz,
-            (true, false, true) => Octant::PxNyPz,
-            (true, true, false) => Octant::PxPyNz,
-            (true, true, true) => Octant::PxPyPz,
-        }
-    }
 }
 
 impl Octant {
@@ -59,220 +33,351 @@ impl Octant {
         Octant::PxPyNz,
         Octant::PxPyPz,
     ];
-}
 
-#[derive(Component)]
-struct Chunk {
-    voxels: Vec<u16>,
-    side_length: u8,
-}
-
-impl Chunk {
-    pub(crate) fn generate(
-        side_length: usize,
-        chunk_center: Vec3,
-        chunk_scale: f32,
-        sampler: impl Fn(Vec3) -> u16,
-    ) -> Self {
-        let scale_unit = chunk_scale / (side_length as f32);
-        let chunk_start = chunk_center - Vec3::splat(0.5 * chunk_scale);
-        Self {
-            voxels: Self::positions(side_length)
-                .map(|position| {
-                    let voxel_center = position.as_vec3() + Vec3::splat(0.5);
-                    sampler(chunk_start + (voxel_center * scale_unit))
-                })
-                .collect(),
-            side_length: side_length as u8,
+    fn unit_offset(&self) -> ChunkPosition {
+        match self {
+            Octant::NxNyNz => ChunkPosition(0, 0, 0),
+            Octant::NxNyPz => ChunkPosition(0, 0, 1),
+            Octant::NxPyNz => ChunkPosition(0, 1, 0),
+            Octant::NxPyPz => ChunkPosition(0, 1, 1),
+            Octant::PxNyNz => ChunkPosition(1, 0, 0),
+            Octant::PxNyPz => ChunkPosition(1, 0, 1),
+            Octant::PxPyNz => ChunkPosition(1, 1, 0),
+            Octant::PxPyPz => ChunkPosition(1, 1, 1),
         }
     }
 
-    pub(crate) fn enhance(
-        &self,
-        chunk_transform: GlobalTransform,
-        sampler: impl Fn(Vec3, u16, Octant) -> u16,
-    ) -> Vec<Self> {
-        let side_length = self.side_length as usize;
-        let half_length = side_length / 2;
-        let scale = chunk_transform.scale().max_element();
-        assert_eq!(chunk_transform.scale().x, scale);
-        assert_eq!(chunk_transform.scale().y, scale);
-        assert_eq!(chunk_transform.scale().z, scale);
-        let scale_unit = scale / (side_length as f32);
-        let chunk_start = chunk_transform.translation() - Vec3::splat(0.5 * scale);
-        Octant::ALL
-            .iter()
-            .map(|octant| {
-                let chunk_start = chunk_start + UVec3::from(octant).as_vec3() * 0.5;
-                let scale_unit = scale_unit / 2;
-                Self {
-                    voxels: Self::positions(side_length)
-                        .map(|position| {
-                            let parent_position = (position / 2) + offset;
-                            let parent_index =
-                                Self::position_to_index(parent_position, side_length);
-                            let parent_voxel = self.voxels[parent_index];
-                            let voxel_position = chunk_start + (position.as_vec3() * scale_unit);
-                            sampler(voxel_position, parent_voxel, position.into())
-                        })
-                        .collect(),
-                    side_length: self.side_length,
+    fn chunk_octant(position: ChunkPosition) -> Octant {
+        match (
+            position.0 >= HALF_LENGTH,
+            position.1 >= HALF_LENGTH,
+            position.2 >= HALF_LENGTH,
+        ) {
+            (false, false, false) => Octant::NxNyNz,
+            (false, false, true) => Octant::NxNyPz,
+            (false, true, false) => Octant::NxPyNz,
+            (false, true, true) => Octant::NxPyPz,
+            (true, false, false) => Octant::PxNyNz,
+            (true, false, true) => Octant::PxNyPz,
+            (true, true, false) => Octant::PxPyNz,
+            (true, true, true) => Octant::PxPyPz,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct ChunkIndex(usize);
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct ChunkPosition(usize, usize, usize);
+
+impl From<ChunkPosition> for ChunkIndex {
+    #[inline]
+    fn from(position: ChunkPosition) -> Self {
+        assert!(position.0 < CHUNK_LENGTH);
+        assert!(position.1 < CHUNK_LENGTH);
+        assert!(position.2 < CHUNK_LENGTH);
+        ChunkIndex(
+            position.0 + position.1 * CHUNK_LENGTH + position.2 * CHUNK_LENGTH * CHUNK_LENGTH,
+        )
+    }
+}
+
+impl From<ChunkIndex> for ChunkPosition {
+    #[inline]
+    fn from(index: ChunkIndex) -> Self {
+        assert!(index.0 < CHUNK_SIZE);
+        Self(
+            index.0 % CHUNK_LENGTH,
+            index.0 / CHUNK_LENGTH % CHUNK_LENGTH,
+            index.0 / CHUNK_LENGTH / CHUNK_LENGTH,
+        )
+    }
+}
+
+impl From<ChunkPosition> for UVec3 {
+    fn from(position: ChunkPosition) -> Self {
+        Self::new(position.0 as u32, position.1 as u32, position.2 as u32)
+    }
+}
+
+impl Add<Self> for ChunkPosition {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output {
+        ChunkPosition(self.0 + rhs.0, self.1 + rhs.1, self.2 + rhs.2)
+    }
+}
+
+impl Sub<Self> for ChunkPosition {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        ChunkPosition(self.0 - rhs.0, self.1 - rhs.1, self.2 - rhs.2)
+    }
+}
+
+impl Mul<usize> for ChunkPosition {
+    type Output = Self;
+    fn mul(self, rhs: usize) -> Self::Output {
+        ChunkPosition(self.0 * rhs, self.1 * rhs, self.2 * rhs)
+    }
+}
+
+struct Face {
+    origin: ChunkIndex,
+    direction: Dir3,
+}
+
+enum SimpleNormal {
+    Positive,
+    Negative,
+    None,
+}
+
+#[derive(Clone, Component)]
+struct Chunk {
+    voxels: [u16; CHUNK_SIZE],
+}
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Self {
+            voxels: [0; CHUNK_SIZE],
+        }
+    }
+}
+
+impl Chunk {
+    pub(crate) fn generate(sampler: impl Fn(UVec3) -> u16) -> Self {
+        let mut chunk = Chunk::default();
+        for index in Self::iter() {
+            chunk.voxels[index.0] = sampler(UVec3::from(ChunkPosition::from(index)));
+        }
+        chunk
+    }
+
+    pub(crate) fn enhance(&self, sampler: impl Fn(UVec3, u16, Octant) -> u16) -> [Self; 8] {
+        let mut chunks = [
+            Chunk::default(),
+            Chunk::default(),
+            Chunk::default(),
+            Chunk::default(),
+            Chunk::default(),
+            Chunk::default(),
+            Chunk::default(),
+            Chunk::default(),
+        ];
+
+        for index in Self::iter() {
+            let position = ChunkPosition::from(index);
+            let current_octant = Octant::chunk_octant(position);
+            let offset = position * 2 - current_octant.unit_offset() * CHUNK_LENGTH;
+            for sub_octant in Octant::ALL {
+                let sub_voxel_position = offset + sub_octant.unit_offset();
+                let sub_voxel_index = ChunkIndex::from(sub_voxel_position);
+                chunks[current_octant as usize].voxels[sub_voxel_index.0] =
+                    sampler(UVec3::from(position), self.voxels[index.0], sub_octant);
+            }
+        }
+        chunks
+    }
+
+    fn interior_faces(&self, surface: impl Fn(u16, u16) -> SimpleNormal) -> Vec<Face> {
+        let mut faces = Vec::new();
+        for z in 0..CHUNK_LENGTH {
+            for y in 0..CHUNK_LENGTH {
+                for x in 0..INNER_LENGTH {
+                    let current = ChunkIndex::from(ChunkPosition(x, y, z));
+                    let adjacent = ChunkIndex::from(ChunkPosition(x + 1, y, z));
+                    match surface(self.voxels[current.0], self.voxels[adjacent.0]) {
+                        SimpleNormal::Positive => faces.push(Face {
+                            origin: current,
+                            direction: Dir3::X,
+                        }),
+                        SimpleNormal::Negative => faces.push(Face {
+                            origin: current,
+                            direction: Dir3::NEG_X,
+                        }),
+                        SimpleNormal::None => (),
+                    }
                 }
-            })
-            .collect()
+            }
+        }
+
+        for z in 0..CHUNK_LENGTH {
+            for y in 0..INNER_LENGTH {
+                for x in 0..CHUNK_LENGTH {
+                    let current = ChunkIndex::from(ChunkPosition(x, y, z));
+                    let adjacent = ChunkIndex::from(ChunkPosition(x, y + 1, z));
+                    match surface(self.voxels[current.0], self.voxels[adjacent.0]) {
+                        SimpleNormal::Positive => faces.push(Face {
+                            origin: current,
+                            direction: Dir3::Y,
+                        }),
+                        SimpleNormal::Negative => faces.push(Face {
+                            origin: current,
+                            direction: Dir3::NEG_Y,
+                        }),
+                        SimpleNormal::None => (),
+                    }
+                }
+            }
+        }
+
+        for z in 0..INNER_LENGTH {
+            for y in 0..CHUNK_LENGTH {
+                for x in 0..CHUNK_LENGTH {
+                    let current = ChunkIndex::from(ChunkPosition(x, y, z));
+                    let adjacent = ChunkIndex::from(ChunkPosition(x, y, z + 1));
+                    match surface(self.voxels[current.0], self.voxels[adjacent.0]) {
+                        SimpleNormal::Positive => faces.push(Face {
+                            origin: current,
+                            direction: Dir3::Z,
+                        }),
+                        SimpleNormal::Negative => faces.push(Face {
+                            origin: current,
+                            direction: Dir3::NEG_Z,
+                        }),
+                        SimpleNormal::None => (),
+                    }
+                }
+            }
+        }
+        faces
     }
 
-    fn positions(side_length: usize) -> impl Iterator<Item = UVec3> {
-        let total_size = side_length * side_length * side_length;
-        (0..total_size).map(move |index| Self::index_to_position(index, side_length))
+    pub(crate) fn interior_mesh(&self, surface: impl Fn(u16, u16) -> SimpleNormal) -> Mesh {
+        let positions = Vec::new();
+        let normals = Vec::new();
+        let indices = Vec::new();
+        for face in self.interior_faces(surface) {
+            positions.add()
+        }
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_indices(Indices::U32(indices))
     }
 
-    fn index_to_position(index: usize, side_length: usize) -> UVec3 {
-        let side_length = side_length;
-        let z = index / side_length / side_length;
-        let y = index / side_length % side_length;
-        let x = index % side_length;
-        UVec3::new(x as u32, y as u32, z as u32)
-    }
-
-    fn position_to_index(position: UVec3, side_length: usize) -> usize {
-        let mut index = (position.z as usize) * side_length * side_length;
-        index += (position.y as usize) * side_length;
-        index += position.x as usize;
-        index
+    fn iter() -> impl Iterator<Item = ChunkIndex> {
+        (0..CHUNK_SIZE).map(|index| ChunkIndex(index))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{Rng, rng};
 
-    fn indices_positions(size: usize) {
-        for index in 0..(size * size * size) {
-            let position = Chunk::index_to_position(index, size);
-            assert!(position.x >= 0);
-            assert!(position.x < size as u32);
-            assert!(position.y >= 0);
-            assert!(position.y < size as u32);
-            assert!(position.z >= 0);
-            assert!(position.z < size as u32);
-            let matched_index = Chunk::position_to_index(position, size);
-            assert!(matched_index >= 0);
-            assert!(matched_index < size * size * size);
-            assert_eq!(index, matched_index);
+    fn valid_indices() -> impl Iterator<Item = usize> {
+        0..CHUNK_SIZE
+    }
+
+    fn valid_positions() -> impl Iterator<Item = UVec3> {
+        (0..CHUNK_LENGTH).flat_map(|z| {
+            (0..CHUNK_LENGTH).flat_map(move |y| {
+                (0..CHUNK_LENGTH).map(move |x| UVec3::new(x as u32, y as u32, z as u32))
+            })
+        })
+    }
+
+    #[test]
+    fn check_chunk_octants() {
+        for octant in Octant::ALL {
+            let position = octant.unit_offset() * CHUNK_LENGTH as u32 * 2;
+            assert_eq!(Octant::chunk_octant(position), octant);
         }
     }
 
     #[test]
-    fn indices_positions_16() {
-        indices_positions(16);
-    }
-
-    #[test]
-    fn indices_positions_to_128() {
-        for size in 1..=128 {
-            indices_positions(size);
-        }
-    }
-
-    fn iter_positions(size: usize) {
-        let mut checklist = vec![false; size * size * size];
-        for position in Chunk::positions(size) {
-            checklist[Chunk::position_to_index(position, size)] = true;
-        }
-        for value in checklist {
-            assert!(value);
+    fn check_all_valid_chunk_indices() {
+        for (index, position) in valid_indices().zip(valid_positions()) {
+            let chunk_index = ChunkIndex(index);
+            let computed_position = UVec3::from(chunk_index);
+            assert_eq!(computed_position, position);
+            let computed_chunk_index = ChunkIndex::from_position(computed_position);
+            assert_eq!(computed_chunk_index, chunk_index);
         }
     }
 
     #[test]
-    fn iter_positions_16() {
-        iter_positions(16);
+    #[should_panic(expected = "Invalid chunk positions should trigger debug asserts")]
+    fn check_invalid_chunk_index_x() {
+        let position = UVec3::new(CHUNK_LENGTH as u32, 0, 0);
+        ChunkIndex::from_position(position);
     }
 
     #[test]
-    fn iter_positions_to_128() {
-        for size in 1..=128 {
-            iter_positions(size);
-        }
+    #[should_panic(expected = "Invalid chunk positions should trigger debug asserts")]
+    fn check_invalid_chunk_index_y() {
+        let position = UVec3::new(0, CHUNK_LENGTH as u32, 0);
+        ChunkIndex::from_position(position);
     }
 
-    fn generate_positions(chunk_center: Vec3, scale: f32, size: usize) {
-        let scale_unit = scale / (size as f32);
-        let last_position = Vec3::INFINITY;
-        Chunk::generate(size, chunk_center, scale, |position| {
-            assert!(position.x > chunk_center.x - (scale * 0.5));
-            assert!(position.x < chunk_center.x + (scale * 0.5));
-            assert_eq!((position.x - chunk_center.x) % scale_unit, 0.5 * scale_unit);
-            assert!(position.y > chunk_center.y - (scale * 0.5));
-            assert!(position.y < chunk_center.y + (scale * 0.5));
-            assert_eq!((position.y - chunk_center.y) % scale_unit, 0.5 * scale_unit);
-            assert!(position.z > chunk_center.z - (scale * 0.5));
-            assert!(position.z < chunk_center.z + (scale * 0.5));
-            assert_eq!((position.z - chunk_center.z) % scale_unit, 0.5 * scale_unit);
-            let end_offset = (scale - scale_unit) * 0.5;
-            let start_position = chunk_center - Vec3::splat(-end_offset);
-            if last_position == Vec3::INFINITY {
-                assert_eq!(position, start_position);
-            }
-            if position.y == last_position.y && position.z == last_position.z {
-                assert_eq!(position.x - last_position.x, scale_unit);
-            }
-            if last_position.y == end_offset {
-                assert_eq!(position.x, -end_offset);
-            }
-            if last_position.z == end_offset {
-                assert_eq!(position.y, -end_offset);
-            }
-            0
+    #[test]
+    #[should_panic(expected = "Invalid chunk positions should trigger debug asserts")]
+    fn check_invalid_chunk_index_z() {
+        let position = UVec3::new(0, 0, CHUNK_LENGTH as u32);
+        ChunkIndex::from_position(position);
+    }
+
+    #[test]
+    fn check_generate() {
+        let chunk = Chunk::generate(|chunk_index| {
+            let position = UVec3::from(chunk_index);
+            let recomputed_chunk_index = ChunkIndex::from_position(position);
+            recomputed_chunk_index.0 as u16
         });
-    }
-
-    #[test]
-    fn random_center_generate_positions() {
-        let mut generator = rng();
-        for _ in 0..10 {
-            let center = Vec3::new(
-                generator.random_range(-100.0..100.0),
-                generator.random_range(-100.0..100.0),
-                generator.random_range(-100.0..100.0),
-            );
-            generate_positions(center, 16.0, 16);
+        for index in valid_indices() {
+            assert_eq!(chunk.voxels[index], index as u16)
         }
     }
 
     #[test]
-    fn random_scale_generate_positions() {
-        let mut generator = rng();
-        for _ in 0..10 {
-            let scale = rng().random_range(-100.0..100.0);
-            generate_positions(Vec3::ZERO, scale, 16);
+    fn check_enhance_octant_order() {
+        let chunk = Chunk::generate(|chunk_index| chunk_index.0 as u16);
+        let chunks = chunk.enhance(|chunk_index, voxel_value, sub_octant| {
+            assert_eq!(chunk_index.0, voxel_value as usize);
+            sub_octant as u16
+        });
+        for child in chunks {
+            for index in 0..child.voxels.len() {
+                let position = UVec3::from(ChunkIndex(index));
+                let expected_octant = match (
+                    position.x % 2 == 0,
+                    position.y % 2 == 0,
+                    position.z % 2 == 0,
+                ) {
+                    (false, false, false) => Octant::NxNyNz,
+                    (false, false, true) => Octant::NxNyPz,
+                    (false, true, false) => Octant::NxPyNz,
+                    (false, true, true) => Octant::NxPyPz,
+                    (true, false, false) => Octant::PxNyNz,
+                    (true, false, true) => Octant::PxNyPz,
+                    (true, true, false) => Octant::PxPyNz,
+                    (true, true, true) => Octant::PxPyPz,
+                };
+                assert_eq!(expected_octant as u16, child.voxels[index])
+            }
         }
     }
 
     #[test]
-    fn generate_positions_16() {
-        generate_positions(Vec3::ZERO, 16.0, 16);
-    }
-
-    #[test]
-    fn generate_positions_to_128() {
-        for size in 1..=128 {
-            generate_positions(Vec3::ZERO, size as f32, size);
+    fn check_enhance_index_order() {
+        let chunk = Chunk::generate(|chunk_index| chunk_index.0 as u16);
+        let chunks = chunk.enhance(|chunk_index, voxel_value, _sub_octant| {
+            assert_eq!(chunk_index.0, voxel_value as usize);
+            chunk_index.0 as u16
+        });
+        for octant in Octant::ALL {
+            let child = &chunks[octant as usize];
+            for index in 0..child.voxels.len() {
+                let position = (UVec3::from(ChunkIndex(index))
+                    + octant.unit_offset() * CHUNK_LENGTH as u32)
+                    / 2;
+                let chunk_index = ChunkIndex::from_position(position);
+                assert_eq!(chunk_index.0 as u16, child.voxels[index]);
+            }
         }
-    }
-
-    #[test]
-    fn all_random_generate_positions() {
-        let mut generator = rng();
-        let center = Vec3::new(
-            generator.random_range(-100.0..100.0),
-            generator.random_range(-100.0..100.0),
-            generator.random_range(-100.0..100.0),
-        );
-        let scale = generator.random_range(-100.0..100.0);
-        let size = generator.random_range(1..=128);
-        generate_positions(center, scale, size);
     }
 }
