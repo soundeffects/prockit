@@ -1,5 +1,5 @@
 [package]
-name = "prockit_voxels"
+name = "prockit_volume"
 version = "0.1.0"
 edition = "2024"
 categories = ["game-engines", "game-development", "graphics", "rendering"]
@@ -17,19 +17,19 @@ rand = "0.9.2"
 [dev-dependencies]
 criterion = "0.7"
 
-[profile.dev]
-opt-level = 1
-
-[profile.dev.package.bevy]
-features = ["dynamic_linking"]
-
-[profile.dev.package.'*']
-opt-level = 3
-
-[profile.release]
-codegen-units = 1
-lto = "thin"
-opt-level = 3
+# [profile.dev]
+# opt-level = 1
+#
+# [profile.dev.package.bevy]
+# features = ["dynamic_linking"]
+#
+# [profile.dev.package.'*']
+# opt-level = 3
+#
+# [profile.release]
+# codegen-units = 1
+# lto = "thin"
+# opt-level = 3
 
 [[bench]]
 name = "chunk"

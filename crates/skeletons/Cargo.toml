@@ -14,14 +14,14 @@ bevy = "0.14"
 bevy_console = { git = "https://github.com/msklosak/bevy-console.git", branch = "bevy_014", optional = true }
 clap = { version = "4.5", optional = true }
 
-[profile.dev.package.bevy]
-features = ["dynamic_linking"]
-
-[profile.dev.package.'*']
-opt-level = 2
-
-[profile.release]
-opt-level = 3
+# [profile.dev.package.bevy]
+# features = ["dynamic_linking"]
+#
+# [profile.dev.package.'*']
+# opt-level = 2
+#
+# [profile.release]
+# opt-level = 3
 
 [features]
 bevy_console = ["dep:bevy_console", "dep:clap"]

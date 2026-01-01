@@ -1,5 +1,6 @@
-# Acore
-The Adventure Core library is a collection of useful procedural generation tools for adventure games, integrated with the Bevy game engine.
+# Prockit Volume
+A system for generating volumetric data, generated and stored using a regular grid (voxels) and
+meshed into terrain or other objects.
 
 ## Setup
 We use the `mold` linker for faster compile times on linux; install with the following commands:

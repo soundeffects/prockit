@@ -1,0 +1,13 @@
+[package]
+name = "prockit_sweeps"
+version = "0.1.0"
+edition = "2024"
+categories = ["game-engines", "game-development", "graphics", "rendering"]
+description = "The backbone for a set of tools for procedurally generating assets and scenes for game development."
+keywords = ["game", "engine", "graphics", "bevy", "procedural"]
+license = "LGPL-3.0-or-greater"
+repository = "https://github.com/soundeffects/prockit/tree/main/crates/framework"
+documentation = "placeholder"
+
+[dependencies]
+bevy = { version = "0.17", features = ["reflect_functions"] }

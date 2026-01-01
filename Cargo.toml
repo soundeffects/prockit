@@ -21,8 +21,8 @@ criterion = "0.7"
 [profile.dev]
 opt-level = 1
 
-[profile.dev.package.bevy]
-features = ["dynamic_linking"]
+# [profile.dev.package.bevy]
+# features = ["dynamic_linking"]
 
 [profile.dev.package.'*']
 opt-level = 3
