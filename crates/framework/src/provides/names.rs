@@ -7,7 +7,7 @@ use std::any::TypeId;
 /// # Examples
 ///
 /// ```
-/// # use framework::provides::Names;
+/// # use prockit_framework::Names;
 /// let names = Names::new(["add", "sum", "plus"]);
 /// assert!(names.contains("add"));
 /// assert!(names.contains("sum"));
@@ -17,7 +17,7 @@ use std::any::TypeId;
 /// let single = Names::from("multiply");
 /// assert!(single.contains("multiply"));
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Names {
     names: Vec<String>,
 }
@@ -28,7 +28,7 @@ impl Names {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::Names;
+    /// # use prockit_framework::Names;
     /// let names = Names::new(["foo", "bar"]);
     /// assert!(names.contains("foo"));
     ///
@@ -46,7 +46,7 @@ impl Names {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::Names;
+    /// # use prockit_framework::Names;
     /// let names = Names::new(["alpha", "beta", "gamma"]);
     /// let collected: Vec<&str> = names.iter().collect();
     /// assert_eq!(collected, vec!["alpha", "beta", "gamma"]);
@@ -60,7 +60,7 @@ impl Names {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::Names;
+    /// # use prockit_framework::Names;
     /// let names = Names::new(["read", "write", "execute"]);
     /// assert!(names.contains("read"));
     /// assert!(!names.contains("delete"));
@@ -96,7 +96,7 @@ impl<const N: usize> From<[String; N]> for Names {
 
 /// A `TypeId` paired with a set of `Names`, enabling type-safe name-based
 /// lookups for `Provides`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NamedType {
     type_id: TypeId,
     names: Names,
@@ -123,6 +123,7 @@ impl NamedType {
 }
 
 /// Represents a function signature with `NamedType`s for the return value and arguments.
+#[derive(Clone, Debug)]
 pub struct Signature {
     return_type: NamedType,
     arg_types: Vec<NamedType>,
@@ -146,74 +147,6 @@ impl Signature {
     /// Returns a slice of the argument types for this function signature.
     pub fn arg_types(&self) -> &[NamedType] {
         &self.arg_types
-    }
-}
-
-/// Trait for function types that can generate their own signature metadata, for
-/// automatic extraction when adding functions to a `Provides` registry.
-pub trait Signatured<Names> {
-    /// Generates a signature for this function type given names and self reference.
-    fn signature(names: Names) -> Signature;
-}
-
-impl<R: 'static> Signatured<Names> for fn() -> R {
-    fn signature(names: Names) -> Signature {
-        Signature::new(NamedType::new::<R>(names), vec![])
-    }
-}
-
-impl<R: 'static> Signatured<(Names,)> for fn() -> R {
-    fn signature(names: (Names,)) -> Signature {
-        Signature::new(NamedType::new::<R>(names.0), vec![])
-    }
-}
-
-impl<R: 'static, A: 'static> Signatured<(Names, Names)> for fn(A) -> R {
-    fn signature(names: (Names, Names)) -> Signature {
-        Signature::new(
-            NamedType::new::<R>(names.0),
-            vec![NamedType::new::<A>(names.1)],
-        )
-    }
-}
-
-impl<R: 'static, A1: 'static, A2: 'static> Signatured<(Names, Names, Names)> for fn(A1, A2) -> R {
-    fn signature(names: (Names, Names, Names)) -> Signature {
-        Signature::new(
-            NamedType::new::<R>(names.0),
-            vec![NamedType::new::<A1>(names.1), NamedType::new::<A2>(names.2)],
-        )
-    }
-}
-
-impl<R: 'static, A1: 'static, A2: 'static, A3: 'static> Signatured<(Names, Names, Names, Names)>
-    for fn(A1, A2, A3) -> R
-{
-    fn signature(names: (Names, Names, Names, Names)) -> Signature {
-        Signature::new(
-            NamedType::new::<R>(names.0),
-            vec![
-                NamedType::new::<A1>(names.1),
-                NamedType::new::<A2>(names.2),
-                NamedType::new::<A3>(names.3),
-            ],
-        )
-    }
-}
-
-impl<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>
-    Signatured<(Names, Names, Names, Names, Names)> for fn(A1, A2, A3, A4) -> R
-{
-    fn signature(names: (Names, Names, Names, Names, Names)) -> Signature {
-        Signature::new(
-            NamedType::new::<R>(names.0),
-            vec![
-                NamedType::new::<A1>(names.1),
-                NamedType::new::<A2>(names.2),
-                NamedType::new::<A3>(names.3),
-                NamedType::new::<A4>(names.4),
-            ],
-        )
     }
 }
 
@@ -247,19 +180,9 @@ mod tests {
 
     #[test]
     fn test_signature_zero_args() {
-        let sig: Signature = <fn() -> f32>::signature(Names::from("result"));
+        let sig = Signature::new(NamedType::new::<f32>(Names::from("something")), vec![]);
 
         assert_eq!(sig.return_type().type_id(), TypeId::of::<f32>());
         assert_eq!(sig.arg_types().len(), 0);
-    }
-
-    #[test]
-    fn test_signature_one_arg() {
-        let sig: Signature =
-            <fn(i32) -> String>::signature((Names::from("result"), Names::from("input")));
-
-        assert_eq!(sig.return_type().type_id(), TypeId::of::<String>());
-        assert_eq!(sig.arg_types().len(), 1);
-        assert_eq!(sig.arg_types()[0].type_id(), TypeId::of::<i32>());
     }
 }

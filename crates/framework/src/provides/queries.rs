@@ -8,7 +8,7 @@ use std::any::TypeId;
 /// # Examples
 ///
 /// ```
-/// # use framework::provides::{NameQuery, Names};
+/// # use prockit_framework::{NameQuery, Names};
 /// let exact = NameQuery::exact("add");
 /// let names = Names::from("add");
 /// assert!(exact.matches(&names));
@@ -17,6 +17,7 @@ use std::any::TypeId;
 /// let getter_names = Names::from("get_value");
 /// assert!(pattern.matches(&getter_names));
 /// ```
+#[derive(Clone)]
 pub struct NameQuery {
     regex: Regex,
 }
@@ -27,7 +28,7 @@ impl NameQuery {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::{NameQuery, Names};
+    /// # use prockit_framework::{NameQuery, Names};
     /// # use regex::Regex;
     /// // using regex::Regex
     /// let regex = Regex::new("test.*").unwrap();
@@ -43,7 +44,7 @@ impl NameQuery {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::{NameQuery, Names};
+    /// # use prockit_framework::{NameQuery, Names};
     /// let query = NameQuery::from_pattern("calc_.*").unwrap();
     /// assert!(query.matches(&Names::from("calc_sum")));
     /// assert!(!query.matches(&Names::from("compute_sum")));
@@ -59,7 +60,7 @@ impl NameQuery {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::{NameQuery, Names};
+    /// # use prockit_framework::{NameQuery, Names};
     /// let query = NameQuery::exact("divide");
     /// assert!(query.matches(&Names::from("divide")));
     /// assert!(!query.matches(&Names::from("division")));
@@ -76,7 +77,7 @@ impl NameQuery {
     /// # Examples
     ///
     /// ```
-    /// # use framework::provides::{NameQuery, Names};
+    /// # use prockit_framework::{NameQuery, Names};
     /// let query = NameQuery::exact("process");
     /// let names = Names::new(["handle", "process", "execute"]);
     /// assert!(query.matches(&names));
@@ -159,82 +160,6 @@ impl SignatureQuery {
     }
 }
 
-/// Trait for function types to generate a `SignatureQuery`. See `Signatured`
-/// for producing `Signature`s.
-pub trait NewSignatureQuery<NameQueries> {
-    /// Creates a signature query for this function type.
-    fn new_query(queries: NameQueries) -> SignatureQuery;
-}
-
-impl<R: 'static> NewSignatureQuery<NameQuery> for fn() -> R {
-    fn new_query(queries: NameQuery) -> SignatureQuery {
-        SignatureQuery::new(NamedTypeQuery::new::<R>(queries), vec![])
-    }
-}
-
-impl<R: 'static> NewSignatureQuery<(NameQuery,)> for fn() -> R {
-    fn new_query(queries: (NameQuery,)) -> SignatureQuery {
-        SignatureQuery::new(NamedTypeQuery::new::<R>(queries.0), vec![])
-    }
-}
-
-impl<R: 'static, A: 'static> NewSignatureQuery<(NameQuery, NameQuery)> for fn(A) -> R {
-    fn new_query(queries: (NameQuery, NameQuery)) -> SignatureQuery {
-        SignatureQuery::new(
-            NamedTypeQuery::new::<R>(queries.0),
-            vec![NamedTypeQuery::new::<A>(queries.1)],
-        )
-    }
-}
-
-impl<R: 'static, A1: 'static, A2: 'static> NewSignatureQuery<(NameQuery, NameQuery, NameQuery)>
-    for fn(A1, A2) -> R
-{
-    fn new_query(queries: (NameQuery, NameQuery, NameQuery)) -> SignatureQuery {
-        SignatureQuery::new(
-            NamedTypeQuery::new::<R>(queries.0),
-            vec![
-                NamedTypeQuery::new::<A1>(queries.1),
-                NamedTypeQuery::new::<A2>(queries.2),
-            ],
-        )
-    }
-}
-
-impl<R: 'static, A1: 'static, A2: 'static, A3: 'static>
-    NewSignatureQuery<(NameQuery, NameQuery, NameQuery, NameQuery)> for fn(A1, A2, A3) -> R
-{
-    fn new_query(queries: (NameQuery, NameQuery, NameQuery, NameQuery)) -> SignatureQuery {
-        SignatureQuery::new(
-            NamedTypeQuery::new::<R>(queries.0),
-            vec![
-                NamedTypeQuery::new::<A1>(queries.1),
-                NamedTypeQuery::new::<A2>(queries.2),
-                NamedTypeQuery::new::<A3>(queries.3),
-            ],
-        )
-    }
-}
-
-impl<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>
-    NewSignatureQuery<(NameQuery, NameQuery, NameQuery, NameQuery, NameQuery)>
-    for fn(A1, A2, A3, A4) -> R
-{
-    fn new_query(
-        queries: (NameQuery, NameQuery, NameQuery, NameQuery, NameQuery),
-    ) -> SignatureQuery {
-        SignatureQuery::new(
-            NamedTypeQuery::new::<R>(queries.0),
-            vec![
-                NamedTypeQuery::new::<A1>(queries.1),
-                NamedTypeQuery::new::<A2>(queries.2),
-                NamedTypeQuery::new::<A3>(queries.3),
-                NamedTypeQuery::new::<A4>(queries.4),
-            ],
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::*;
@@ -276,25 +201,61 @@ mod tests {
 
     #[test]
     fn test_signature_query_matching() {
-        let sig: Signature = <fn(i32, i32) -> i32>::signature((
-            Names::from("sum"),
-            Names::from("x"),
-            Names::from("y"),
-        ));
+        let sig = Signature::new(
+            NamedType::new::<i32>("sum"),
+            vec![NamedType::new::<i32>("x"), NamedType::new::<i32>("y")],
+        );
 
-        let matching_query: SignatureQuery = <fn(i32, i32) -> i32>::new_query((
-            NameQuery::from("sum"),
-            NameQuery::from("x"),
-            NameQuery::from("y"),
-        ));
+        let matching_query = SignatureQuery::new(
+            NamedTypeQuery::new::<i32>(NameQuery::from("sum")),
+            vec![
+                NamedTypeQuery::new::<i32>(NameQuery::from("x")),
+                NamedTypeQuery::new::<i32>(NameQuery::from("y")),
+            ],
+        );
 
-        let non_matching_query: SignatureQuery = <fn(i32, i32) -> i32>::new_query((
-            NameQuery::from("sum"),
-            NameQuery::from("a"),
-            NameQuery::from("b"),
-        ));
+        let non_matching_query = SignatureQuery::new(
+            NamedTypeQuery::new::<i32>(NameQuery::from("sum")),
+            vec![
+                NamedTypeQuery::new::<i32>(NameQuery::from("a")),
+                NamedTypeQuery::new::<i32>(NameQuery::from("b")),
+            ],
+        );
 
         assert!(matching_query.matches(&sig));
         assert!(!non_matching_query.matches(&sig));
+    }
+
+    #[test]
+    fn test_signature_query_non_matching_type() {
+        let sig = Signature::new(
+            NamedType::new::<i32>("sum"),
+            vec![NamedType::new::<i32>("x"), NamedType::new::<i32>("y")],
+        );
+
+        let non_matching_query = SignatureQuery::new(
+            NamedTypeQuery::new::<i32>(NameQuery::from("sum")),
+            vec![
+                NamedTypeQuery::new::<f32>(NameQuery::from("x")),
+                NamedTypeQuery::new::<i32>(NameQuery::from("y")),
+            ],
+        );
+
+        assert!(!non_matching_query.matches(&sig));
+    }
+
+    #[test]
+    fn test_signature_query_exact() {
+        let signature = Signature::new(
+            NamedType::new::<i32>(Names::from("multiply")),
+            vec![NamedType::new::<i32>(Names::from("input"))],
+        );
+
+        let query = SignatureQuery::new(
+            NamedTypeQuery::new::<i32>(NameQuery::exact("multiply")),
+            vec![NamedTypeQuery::new::<i32>(NameQuery::exact("input"))],
+        );
+
+        assert!(query.matches(&signature));
     }
 }
