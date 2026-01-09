@@ -1,5 +1,7 @@
 use bevy::prelude::*;
-use prockit_framework::*;
+use prockit_framework::{
+    ChildCommands, Names, ProceduralNode, ProckitFrameworkPlugin, Provider, Provides,
+};
 
 pub const CHUNK_LENGTH: usize = 16;
 pub const CENTER: Vec3 = Vec3::new(0., 0., 0.);
@@ -52,13 +54,14 @@ impl Chunk {
 }
 
 impl ProceduralNode for Chunk {
-    fn provides(&self) -> Provides {
-        Provides::new() //.with_curry_3(
-        //     Self::opaque,
-        //     Names::from("x"),
-        //     Names::from("y"),
-        //     Names::from("z"),
-        // )
+    fn register_provides<'a>(&'a self, provides: &mut Provides<'a>) {
+        provides.add_3(
+            |x, y, z| self.opaque(x, y, z),
+            Names::from("opaque"),
+            Names::from("x"),
+            Names::from("y"),
+            Names::from("z"),
+        );
     }
 
     fn should_subdivide(&self) -> bool {
@@ -70,7 +73,7 @@ impl ProceduralNode for Chunk {
     fn subdivide(
         &self,
         transform: &GlobalTransform,
-        _provider: &Provider,
+        _provider: &Provider<'_>,
         mut child_commands: ChildCommands,
     ) {
         let scale = transform.scale().max_element() / 2.0;
@@ -100,7 +103,10 @@ fn setup(mut commands: Commands) {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins((ProckitFrameworkPlugin, ProceduralNodePlugin::<Chunk>::new()))
-        .add_systems(Startup, setup);
+        .add_plugins((
+            DefaultPlugins,
+            ProckitFrameworkPlugin::new().with::<Chunk>(),
+        ))
+        .add_systems(Startup, setup)
+        .run();
 }

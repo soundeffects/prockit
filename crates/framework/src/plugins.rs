@@ -1,7 +1,6 @@
 use super::{Provider, Provides};
 use bevy::{ecs::relationship::RelatedSpawnerCommands, prelude::*};
 use bevy_trait_query::{One, RegisterExt};
-use std::marker::PhantomData;
 
 /// A wrapper around Bevy's `Commands` that only exposes the ability to add children, passed to
 /// a `ProceduralNode` when `ProceduralNode::subdivide` is called.
@@ -40,9 +39,11 @@ pub trait ProceduralNode {
         transform.translation().distance_squared(viewer)
     }
 
-    /// Returns the functions this node provides to its descendants in the form of a `Provides`
-    /// struct.
-    fn provides(&self) -> Provides;
+    /// Registers functions this node provides to its descendants.
+    ///
+    /// The lifetime `'a` allows closures to borrow from `self`, enabling methods
+    /// with `&self` arguments to be registered using `add_method_*` methods.
+    fn register_provides<'a>(&'a self, provides: &mut Provides<'a>);
 
     /// Returns `true` if this node should not be subdivided to save resources.
     fn should_subdivide(&self) -> bool;
@@ -52,34 +53,14 @@ pub trait ProceduralNode {
     fn subdivide(
         &self,
         transform: &GlobalTransform,
-        provider: &Provider,
+        provider: &Provider<'_>,
         child_commands: ChildCommands,
     );
 }
 
 #[derive(Component)]
+#[require(GlobalTransform)]
 pub struct Viewer;
-
-pub struct ProceduralNodePlugin<T> {
-    procedural_node_type: PhantomData<T>,
-}
-
-impl<T> ProceduralNodePlugin<T> {
-    pub fn new() -> Self {
-        Self {
-            procedural_node_type: PhantomData,
-        }
-    }
-}
-
-impl<T> Plugin for ProceduralNodePlugin<T>
-where
-    T: Component + ProceduralNode + Send + Sync + 'static,
-{
-    fn build(&self, app: &mut App) {
-        app.register_component_as::<dyn ProceduralNode, T>();
-    }
-}
 
 /// Configuration for the prockit framework's level-of-detail management.
 #[derive(Resource)]
@@ -101,36 +82,61 @@ impl Default for ProckitFrameworkConfig {
     }
 }
 
-pub struct ProckitFrameworkPlugin;
+#[derive(Default)]
+pub struct ProckitFrameworkPlugin {
+    registrations: Vec<Box<dyn Fn(&mut App) + Send + Sync>>,
+}
+
+impl ProckitFrameworkPlugin {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with<Node: ProceduralNode + Component>(mut self) -> Self {
+        self.registrations.push(Box::new(|app: &mut App| {
+            app.register_component_as::<dyn ProceduralNode, Node>();
+        }));
+        self
+    }
+}
 
 impl Plugin for ProckitFrameworkPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ProckitFrameworkConfig>()
             .add_systems(Update, resample);
+        for registration in &self.registrations {
+            registration(app);
+        }
     }
 }
 
-/// Collects a `Provider` for a node by walking up from its parent to the root.
-///
-/// The resulting `Provider` contains `Provides` from each ancestor, ordered from
-/// the direct parent (first) to the root (last).
-fn collect_provider(
+/// Collects ancestor entity IDs by walking up from a parent to the root.
+fn collect_ancestor_entities(
     start_parent: Option<Entity>,
-    nodes: &Query<(One<&dyn ProceduralNode>, Option<&ChildOf>)>,
-) -> Provider {
-    let mut provides_chain = Vec::new();
+    hierarchy: &Query<&ChildOf>,
+) -> Vec<Entity> {
+    let mut ancestors = Vec::new();
     let mut current = start_parent;
 
     while let Some(entity) = current {
-        if let Ok((node, child_of)) = nodes.get(entity) {
-            provides_chain.push(node.provides());
-            current = child_of.map(|c| c.parent());
-        } else {
-            break;
-        }
+        ancestors.push(entity);
+        current = hierarchy.get(entity).ok().map(|c| c.parent());
     }
 
-    Provider::new(provides_chain)
+    ancestors
+}
+
+/// Builds a Provider from ancestor nodes, with all ancestor references held simultaneously.
+/// The `ancestor_refs` slice should be ordered from closest ancestor (index 0) to root (last).
+fn build_provider_from_refs<'a>(ancestor_refs: &'a [Ref<'a, dyn ProceduralNode>]) -> Provider<'a> {
+    let mut provider = Provider::empty();
+    for node_ref in ancestor_refs.iter() {
+        let node: &'a dyn ProceduralNode = &**node_ref;
+        let mut provides = Provides::new();
+        node.register_provides(&mut provides);
+        provider.push(provides);
+    }
+    provider
 }
 
 /// Manages level-of-detail by subdividing and collapsing nodes based on viewer distance.
@@ -153,7 +159,8 @@ fn resample(
         &GlobalTransform,
         &Children,
     )>,
-    all_nodes: Query<(One<&dyn ProceduralNode>, Option<&ChildOf>)>,
+    hierarchy: Query<&ChildOf>,
+    all_nodes: Query<One<&dyn ProceduralNode>>,
 ) {
     // Collect viewer positions
     let viewer_positions: Vec<Vec3> = viewers.iter().map(|t| t.translation()).collect();
@@ -181,7 +188,11 @@ fn resample(
             .unwrap();
 
         if min_dist < config.subdivide_threshold {
-            let provider = collect_provider(child_of.map(|c| c.parent()), &all_nodes);
+            let ancestor_entities =
+                collect_ancestor_entities(child_of.map(|c| c.parent()), &hierarchy);
+            let ancestor_nodes: Vec<_> = all_nodes.iter_many(&ancestor_entities).collect();
+            let provider = build_provider_from_refs(&ancestor_nodes);
+
             node.subdivide(
                 &transform,
                 &provider,

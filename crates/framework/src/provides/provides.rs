@@ -1,14 +1,27 @@
 use super::{NameQuery, NamedType, NamedTypeQuery, Names, Signature, SignatureQuery};
-use std::any::Any;
+use std::marker::PhantomData;
 
-/// Internal storage element of a `Provides` struct, encapsulating a registered
-/// function along with its signature. The function is type-erased and stored
-/// as a trait object, to be downcasted when retrieved via queries. If the function
-/// was registered as a self-referential function, it will have a `self_type`
-/// `TypeId`.
-struct FunctionEntry {
+/// Internal storage element of a `Provides` struct, encapsulating a registered function along
+/// with its signature. The function is type-erased and stored as a raw pointer, to be cast back
+/// when retrieved via queries.
+///
+/// SAFETY: The `function_ptr` is a leaked Box (`Box<dyn Fn(...) -> ...>`) and must be dropped
+/// manually.
+struct FunctionEntry<'a> {
     signature: Signature,
-    function: Box<dyn Any + Send + Sync>,
+    function: *const (),
+    drop: fn(*const ()),
+    _lifetime: PhantomData<&'a ()>,
+}
+
+// SAFETY: The underlying function is Send + Sync, and we only access it safely
+unsafe impl Send for FunctionEntry<'_> {}
+unsafe impl Sync for FunctionEntry<'_> {}
+
+impl Drop for FunctionEntry<'_> {
+    fn drop(&mut self) {
+        (self.drop)(self.function);
+    }
 }
 
 /// A registry for functions that can be looked up by function signature with
@@ -19,7 +32,6 @@ struct FunctionEntry {
 /// for finding desired functions.
 ///
 /// # Examples
-///
 /// ```
 /// # use prockit_framework::{Provides, Names, NameQuery};
 /// let mut provides = Provides::new();
@@ -41,15 +53,14 @@ struct FunctionEntry {
 ///
 /// assert_eq!(func(3, 4), 7);
 /// ```
-pub struct Provides {
-    entries: Vec<FunctionEntry>,
+pub struct Provides<'a> {
+    entries: Vec<FunctionEntry<'a>>,
 }
 
-impl Provides {
+impl<'a> Provides<'a> {
     /// Creates a new, empty `Provides` registry.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::Provides;
     /// let provides = Provides::new();
@@ -64,7 +75,6 @@ impl Provides {
     /// the return type/function.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names};
     /// let mut provides = Provides::new();
@@ -78,13 +88,23 @@ impl Provides {
     /// ```
     pub fn add_0<R: 'static>(
         &mut self,
-        function: impl Fn() -> R + Send + Sync + 'static,
+        function: impl Fn() -> R + Send + Sync + 'a,
         r_names: Names,
     ) {
-        let trait_object: Box<dyn Fn() -> R + Send + Sync> = Box::new(function);
+        let boxed: Box<dyn Fn() -> R + Send + Sync + 'a> = Box::new(function);
+
+        fn drop<R: 'static>(function: *const ()) {
+            // SAFETY: function was created from Box::into_raw of matching function signature
+            unsafe {
+                let _ = Box::from_raw(function as *mut Box<dyn Fn() -> R + Send + Sync>);
+            }
+        }
+
         self.entries.push(FunctionEntry {
             signature: Signature::new(NamedType::new::<R>(r_names), vec![]),
-            function: Box::new(trait_object),
+            function: Box::into_raw(Box::new(boxed)) as *const (),
+            drop: drop::<R>,
+            _lifetime: std::marker::PhantomData,
         });
     }
 
@@ -92,7 +112,6 @@ impl Provides {
     /// return type, followed by the argument type.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names};
     /// let mut provides = Provides::new();
@@ -111,17 +130,27 @@ impl Provides {
     /// ```
     pub fn add_1<R: 'static, A: 'static>(
         &mut self,
-        function: impl Fn(A) -> R + Send + Sync + 'static,
+        function: impl Fn(A) -> R + Send + Sync + 'a,
         r_names: Names,
         a_names: Names,
     ) {
-        let trait_object: Box<dyn Fn(A) -> R + Send + Sync> = Box::new(function);
+        let boxed: Box<dyn Fn(A) -> R + Send + Sync + 'a> = Box::new(function);
+
+        fn drop<R: 'static, A: 'static>(function: *const ()) {
+            // SAFETY: function was created from Box::into_raw of matching function signature
+            unsafe {
+                let _ = Box::from_raw(function as *mut Box<dyn Fn(A) -> R + Send + Sync>);
+            }
+        }
+
         self.entries.push(FunctionEntry {
             signature: Signature::new(
                 NamedType::new::<R>(r_names),
                 vec![NamedType::new::<A>(a_names)],
             ),
-            function: Box::new(trait_object),
+            function: Box::into_raw(Box::new(boxed)) as *const (),
+            drop: drop::<R, A>,
+            _lifetime: std::marker::PhantomData,
         });
     }
 
@@ -129,7 +158,6 @@ impl Provides {
     /// return type, followed by names for the two argument types.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names};
     /// let mut provides = Provides::new();
@@ -149,12 +177,20 @@ impl Provides {
     /// ```
     pub fn add_2<R: 'static, A1: 'static, A2: 'static>(
         &mut self,
-        function: impl Fn(A1, A2) -> R + Send + Sync + 'static,
+        function: impl Fn(A1, A2) -> R + Send + Sync + 'a,
         r_names: Names,
         a1_names: Names,
         a2_names: Names,
     ) {
-        let trait_object: Box<dyn Fn(A1, A2) -> R + Send + Sync> = Box::new(function);
+        let boxed: Box<dyn Fn(A1, A2) -> R + Send + Sync + 'a> = Box::new(function);
+
+        fn drop<R: 'static, A1: 'static, A2: 'static>(function: *const ()) {
+            // SAFETY: function was created from Box::into_raw of matching function signature
+            unsafe {
+                let _ = Box::from_raw(function as *mut Box<dyn Fn(A1, A2) -> R + Send + Sync>);
+            }
+        }
+
         self.entries.push(FunctionEntry {
             signature: Signature::new(
                 NamedType::new::<R>(r_names),
@@ -163,7 +199,9 @@ impl Provides {
                     NamedType::new::<A2>(a2_names),
                 ],
             ),
-            function: Box::new(trait_object),
+            function: Box::into_raw(Box::new(boxed)) as *const (),
+            drop: drop::<R, A1, A2>,
+            _lifetime: std::marker::PhantomData,
         });
     }
 
@@ -171,7 +209,6 @@ impl Provides {
     /// return type, followed by names for the argument types.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names};
     /// let mut provides = Provides::new();
@@ -187,13 +224,21 @@ impl Provides {
     /// ```
     pub fn add_3<R: 'static, A1: 'static, A2: 'static, A3: 'static>(
         &mut self,
-        function: impl Fn(A1, A2, A3) -> R + Send + Sync + 'static,
+        function: impl Fn(A1, A2, A3) -> R + Send + Sync + 'a,
         r_names: Names,
         a1_names: Names,
         a2_names: Names,
         a3_names: Names,
     ) {
-        let trait_object: Box<dyn Fn(A1, A2, A3) -> R + Send + Sync> = Box::new(function);
+        let boxed: Box<dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a> = Box::new(function);
+
+        fn drop<R: 'static, A1: 'static, A2: 'static, A3: 'static>(function: *const ()) {
+            // SAFETY: function was created from Box::into_raw of matching function signature
+            unsafe {
+                let _ = Box::from_raw(function as *mut Box<dyn Fn(A1, A2, A3) -> R + Send + Sync>);
+            }
+        }
+
         self.entries.push(FunctionEntry {
             signature: Signature::new(
                 NamedType::new::<R>(r_names),
@@ -203,7 +248,9 @@ impl Provides {
                     NamedType::new::<A3>(a3_names),
                 ],
             ),
-            function: Box::new(trait_object),
+            function: Box::into_raw(Box::new(boxed)) as *const (),
+            drop: drop::<R, A1, A2, A3>,
+            _lifetime: PhantomData,
         });
     }
 
@@ -211,7 +258,6 @@ impl Provides {
     /// return type, followed by names for all arguments.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names};
     /// let mut provides = Provides::new();
@@ -230,14 +276,25 @@ impl Provides {
     /// ```
     pub fn add_4<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>(
         &mut self,
-        function: impl Fn(A1, A2, A3, A4) -> R + Send + Sync + 'static,
+        function: impl Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a,
         r_names: Names,
         a1_names: Names,
         a2_names: Names,
         a3_names: Names,
         a4_names: Names,
     ) {
-        let trait_object: Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync> = Box::new(function);
+        let boxed: Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a> = Box::new(function);
+
+        fn drop<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>(
+            function: *const (),
+        ) {
+            // SAFETY: function was created from Box::into_raw of matching function signature
+            unsafe {
+                let _ =
+                    Box::from_raw(function as *mut Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync>);
+            }
+        }
+
         self.entries.push(FunctionEntry {
             signature: Signature::new(
                 NamedType::new::<R>(r_names),
@@ -248,7 +305,9 @@ impl Provides {
                     NamedType::new::<A4>(a4_names),
                 ],
             ),
-            function: Box::new(trait_object),
+            function: Box::into_raw(Box::new(boxed)) as *const (),
+            drop: drop::<R, A1, A2, A3, A4>,
+            _lifetime: PhantomData,
         });
     }
 
@@ -258,7 +317,6 @@ impl Provides {
     /// Returns a reference to the function if found, or `None` if no match exists.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names, NameQuery};
     /// let mut provides = Provides::new();
@@ -279,16 +337,17 @@ impl Provides {
     pub fn query_0<R: 'static>(
         &self,
         r_query: NameQuery,
-    ) -> Option<&(dyn Fn() -> R + Send + Sync)> {
+    ) -> Option<&(dyn Fn() -> R + Send + Sync + 'a)> {
         let query = SignatureQuery::new(NamedTypeQuery::new::<R>(r_query), vec![]);
         self.entries
             .iter()
             .find(|entry| query.matches(&entry.signature))
-            .and_then(|entry| {
-                entry
-                    .function
-                    .downcast_ref::<Box<dyn Fn() -> R + Send + Sync>>()
-                    .map(|arc| arc.as_ref())
+            .map(|entry| {
+                // SAFETY: match guarantees the function pointer follows the casted signature
+                unsafe {
+                    let boxed = &*(entry.function as *const Box<dyn Fn() -> R + Send + Sync + 'a>);
+                    boxed.as_ref()
+                }
             })
     }
 
@@ -298,7 +357,6 @@ impl Provides {
     /// Returns a reference to the function if found, or `None` if no match exists.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names, NameQuery};
     /// let mut provides = Provides::new();
@@ -317,7 +375,7 @@ impl Provides {
         &self,
         r_query: NameQuery,
         a_query: NameQuery,
-    ) -> Option<&(dyn Fn(A) -> R + Send + Sync)> {
+    ) -> Option<&(dyn Fn(A) -> R + Send + Sync + 'a)> {
         let query = SignatureQuery::new(
             NamedTypeQuery::new::<R>(r_query),
             vec![NamedTypeQuery::new::<A>(a_query)],
@@ -325,11 +383,12 @@ impl Provides {
         self.entries
             .iter()
             .find(|entry| query.matches(&entry.signature))
-            .and_then(|entry| {
-                entry
-                    .function
-                    .downcast_ref::<Box<dyn Fn(A) -> R + Send + Sync>>()
-                    .map(|arc| arc.as_ref())
+            .map(|entry| {
+                // SAFETY: match guarantees the function pointer follows the casted signature
+                unsafe {
+                    let boxed = &*(entry.function as *const Box<dyn Fn(A) -> R + Send + Sync + 'a>);
+                    boxed.as_ref()
+                }
             })
     }
 
@@ -339,7 +398,6 @@ impl Provides {
     /// Returns a reference to the function if found, or `None` if no match exists.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names, NameQuery};
     /// let mut provides = Provides::new();
@@ -360,7 +418,7 @@ impl Provides {
         r_query: NameQuery,
         a1_query: NameQuery,
         a2_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2) -> R + Send + Sync)> {
+    ) -> Option<&(dyn Fn(A1, A2) -> R + Send + Sync + 'a)> {
         let query = SignatureQuery::new(
             NamedTypeQuery::new::<R>(r_query),
             vec![
@@ -371,11 +429,13 @@ impl Provides {
         self.entries
             .iter()
             .find(|entry| query.matches(&entry.signature))
-            .and_then(|entry| {
-                entry
-                    .function
-                    .downcast_ref::<Box<dyn Fn(A1, A2) -> R + Send + Sync>>()
-                    .map(|arc| arc.as_ref())
+            .map(|entry| {
+                // SAFETY: match guarantees the function pointer follows the casted signature
+                unsafe {
+                    let boxed =
+                        &*(entry.function as *const Box<dyn Fn(A1, A2) -> R + Send + Sync + 'a>);
+                    boxed.as_ref()
+                }
             })
     }
 
@@ -385,7 +445,6 @@ impl Provides {
     /// Returns a reference to the function if found, or `None` if no match exists.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names, NameQuery};
     /// let mut provides = Provides::new();
@@ -414,7 +473,7 @@ impl Provides {
         a1_query: NameQuery,
         a2_query: NameQuery,
         a3_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2, A3) -> R + Send + Sync)> {
+    ) -> Option<&(dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a)> {
         let query = SignatureQuery::new(
             NamedTypeQuery::new::<R>(r_query),
             vec![
@@ -426,11 +485,13 @@ impl Provides {
         self.entries
             .iter()
             .find(|entry| query.matches(&entry.signature))
-            .and_then(|entry| {
-                entry
-                    .function
-                    .downcast_ref::<Box<dyn Fn(A1, A2, A3) -> R + Send + Sync>>()
-                    .map(|arc| arc.as_ref())
+            .map(|entry| {
+                // SAFETY: match guarantees the function pointer follows the casted signature
+                unsafe {
+                    let boxed = &*(entry.function
+                        as *const Box<dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a>);
+                    boxed.as_ref()
+                }
             })
     }
 
@@ -440,7 +501,6 @@ impl Provides {
     /// Returns a reference to the function if found, or `None` if no match exists.
     ///
     /// # Examples
-    ///
     /// ```
     /// # use prockit_framework::{Provides, Names, NameQuery};
     /// let mut provides = Provides::new();
@@ -474,7 +534,7 @@ impl Provides {
         a2_query: NameQuery,
         a3_query: NameQuery,
         a4_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2, A3, A4) -> R + Send + Sync)> {
+    ) -> Option<&(dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a)> {
         let query = SignatureQuery::new(
             NamedTypeQuery::new::<R>(r_query),
             vec![
@@ -487,16 +547,18 @@ impl Provides {
         self.entries
             .iter()
             .find(|entry| query.matches(&entry.signature))
-            .and_then(|entry| {
-                entry
-                    .function
-                    .downcast_ref::<Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync>>()
-                    .map(|arc| arc.as_ref())
+            .map(|entry| {
+                // SAFETY: match guarantees the function pointer follows the casted signature
+                unsafe {
+                    let boxed = &*(entry.function
+                        as *const Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a>);
+                    boxed.as_ref()
+                }
             })
     }
 }
 
-impl Default for Provides {
+impl<'a> Default for Provides<'a> {
     fn default() -> Self {
         Self::new()
     }
@@ -542,23 +604,28 @@ mod tests {
 
     #[test]
     fn test_provides_lifetimes_and_closure() {
-        fn take_provides_and_test(provides: &Provides) {
+        fn take_provides_and_test(provides: &Provides<'_>) {
             let function = provides
                 .query_1::<i32, i32>(NameQuery::exact("multiply"), NameQuery::exact("input"));
             assert!(function.is_some());
             assert_eq!(function.unwrap()(2), 4);
         }
 
-        fn create_provides() -> Provides {
-            let mut provides = Provides::new();
-
+        fn create_provides() -> Provides<'static> {
             struct Multiplier {
                 value: i32,
             }
 
+            impl Multiplier {
+                fn multiply(&self, input: i32) -> i32 {
+                    self.value * input
+                }
+            }
+
+            let mut provides = Provides::new();
             let multiplier = Multiplier { value: 2 };
             provides.add_1(
-                move |input: i32| multiplier.value * input,
+                move |input| multiplier.multiply(input),
                 Names::from("multiply"),
                 Names::from("input"),
             );
@@ -566,5 +633,51 @@ mod tests {
         }
 
         take_provides_and_test(&create_provides());
+    }
+
+    #[test]
+    fn test_overloading() {
+        struct Data {
+            value: i32,
+        }
+
+        impl Data {
+            fn add_multi(&self, a: i32, b: i32, c: i32) -> i32 {
+                self.value + a + b + c
+            }
+
+            fn add(&self, x: i32) -> i32 {
+                self.value + x
+            }
+        }
+
+        let data = Data { value: 100 };
+        let mut provides = Provides::new();
+
+        provides.add_3(
+            |a, b, c| data.add_multi(a, b, c),
+            Names::from("add"),
+            Names::from("a"),
+            Names::from("b"),
+            Names::from("c"),
+        );
+
+        provides.add_1(|x| data.add(x), Names::from("add"), Names::from("x"));
+
+        let add_multi = provides
+            .query_3::<i32, i32, i32, i32>(
+                NameQuery::exact("add"),
+                NameQuery::exact("a"),
+                NameQuery::exact("b"),
+                NameQuery::exact("c"),
+            )
+            .unwrap();
+
+        let add = provides
+            .query_1::<i32, i32>(NameQuery::exact("add"), NameQuery::exact("x"))
+            .unwrap();
+
+        assert_eq!(add_multi(1, 2, 3), 106);
+        assert_eq!(add(1), 101);
     }
 }
