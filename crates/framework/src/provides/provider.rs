@@ -1,5 +1,6 @@
 use super::{NameQuery, Provides};
 use crate::Space;
+use std::sync::Arc;
 
 /// A read-only collection of `Provides` from ancestors in a procedural node hierarchy. Each
 /// `Provides` allows for querying the functions registered by that ancestor. If any function
@@ -7,22 +8,24 @@ use crate::Space;
 ///
 /// # Examples
 /// ```
-/// # use prockit_framework::{Provider, Provides, Names, NameQuery};
-/// let mut parent_provides = Provides::new();
-/// parent_provides.add_0(|| 42i32, Names::from("value"));
-/// let mut grandparent_provides = Provides::new();
-/// grandparent_provides.add_0(|| 100i32, Names::from("value"));
+/// # use prockit_framework::{Provider, Provides, Names, NameQuery, RealSpace};
+/// # use bevy::prelude::*;
+/// let mut parent_provides = Provides::<RealSpace>::new();
+/// parent_provides.add("value", |_: &Vec3| 42i32);
+/// let mut grandparent_provides = Provides::<RealSpace>::new();
+/// grandparent_provides.add("value", |_: &Vec3| 100i32);
 ///
 /// let provider = Provider::hierarchy(vec![grandparent_provides, parent_provides]);
 ///
-/// let value = provider.query_0::<i32>(NameQuery::exact("value")).unwrap();
-/// assert_eq!(value(), 42);
+/// let value = provider.query::<i32>(NameQuery::exact("value")).unwrap();
+/// assert_eq!(value(&Vec3::ZERO), 42);
 /// ```
-pub struct Provider<'a, S: Space> {
-    hierarchy: Vec<Provides<'a, S>>,
+#[derive(Clone)]
+pub struct Provider<S: Space> {
+    hierarchy: Vec<Provides<S>>,
 }
 
-impl<'a, S: Space> Provider<'a, S> {
+impl<S: Space> Provider<S> {
     /// Creates an empty `Provider` for root nodes with no ancestors.
     ///
     /// # Examples
@@ -46,7 +49,7 @@ impl<'a, S: Space> Provider<'a, S> {
     /// let grandparent_provides = Provides::<RealSpace>::new();
     /// let provider = Provider::hierarchy(vec![grandparent_provides, parent_provides]);
     /// ```
-    pub fn hierarchy(hierarchy: Vec<Provides<'a, S>>) -> Self {
+    pub fn hierarchy(hierarchy: Vec<Provides<S>>) -> Self {
         Self { hierarchy }
     }
 
@@ -60,7 +63,7 @@ impl<'a, S: Space> Provider<'a, S> {
     /// let mut provider = Provider::empty();
     /// provider.push(parent_provides);
     /// ```
-    pub fn push(&mut self, provides: Provides<'a, S>) {
+    pub fn push(&mut self, provides: Provides<S>) {
         self.hierarchy.push(provides);
     }
 
@@ -70,12 +73,18 @@ impl<'a, S: Space> Provider<'a, S> {
     pub fn query<R: 'static>(
         &self,
         names: impl Into<NameQuery>,
-    ) -> Option<&(dyn Fn(&S::Position) -> R + Send + Sync + 'a)> {
+    ) -> Option<Arc<dyn Fn(&S::Position) -> R + Send + Sync>> {
         let names = names.into();
         self.hierarchy
             .iter()
             .rev()
             .find_map(|provides| provides.query::<R>(&names))
+    }
+}
+
+impl<S: Space> Default for Provider<S> {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 
@@ -142,5 +151,20 @@ mod tests {
         assert!(result.is_some());
         let constant_answer = result.unwrap();
         assert_eq!(constant_answer(&Vec3::ZERO), 42);
+    }
+
+    #[test]
+    fn test_provider_clone() {
+        let mut provides = Provides::<RealSpace>::new();
+        provides.add("answer", |_: &Vec3| 42i32);
+        let provider = Provider::hierarchy(vec![provides]);
+
+        let cloned = provider.clone();
+
+        let original_fn = provider.query::<i32>("answer").unwrap();
+        let cloned_fn = cloned.query::<i32>("answer").unwrap();
+
+        assert_eq!(original_fn(&Vec3::ZERO), 42);
+        assert_eq!(cloned_fn(&Vec3::ZERO), 42);
     }
 }
