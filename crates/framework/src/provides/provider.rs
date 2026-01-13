@@ -1,4 +1,5 @@
 use super::{NameQuery, Provides};
+use crate::Space;
 
 /// A read-only collection of `Provides` from ancestors in a procedural node hierarchy. Each
 /// `Provides` allows for querying the functions registered by that ancestor. If any function
@@ -17,17 +18,17 @@ use super::{NameQuery, Provides};
 /// let value = provider.query_0::<i32>(NameQuery::exact("value")).unwrap();
 /// assert_eq!(value(), 42);
 /// ```
-pub struct Provider<'a> {
-    hierarchy: Vec<Provides<'a>>,
+pub struct Provider<'a, S: Space> {
+    hierarchy: Vec<Provides<'a, S>>,
 }
 
-impl<'a> Provider<'a> {
+impl<'a, S: Space> Provider<'a, S> {
     /// Creates an empty `Provider` for root nodes with no ancestors.
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::Provider;
-    /// let provider = Provider::empty();
+    /// # use prockit_framework::{Provider, RealSpace};
+    /// let provider = Provider::<RealSpace>::empty();
     /// ```
     pub fn empty() -> Self {
         Self {
@@ -40,12 +41,12 @@ impl<'a> Provider<'a> {
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provider, Provides};
-    /// let parent_provides = Provides::new();
-    /// let grandparent_provides = Provides::new();
+    /// # use prockit_framework::{Provider, Provides, RealSpace};
+    /// let parent_provides = Provides::<RealSpace>::new();
+    /// let grandparent_provides = Provides::<RealSpace>::new();
     /// let provider = Provider::hierarchy(vec![grandparent_provides, parent_provides]);
     /// ```
-    pub fn hierarchy(hierarchy: Vec<Provides<'a>>) -> Self {
+    pub fn hierarchy(hierarchy: Vec<Provides<'a, S>>) -> Self {
         Self { hierarchy }
     }
 
@@ -54,170 +55,92 @@ impl<'a> Provider<'a> {
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provider, Provides, Names};
-    /// let mut parent_provides = Provides::new();
-    /// parent_provides.add_0(|| 42i32, Names::from("value"));
+    /// # use prockit_framework::{Provider, Provides, Names, RealSpace};
+    /// let parent_provides = Provides::<RealSpace>::new();
     /// let mut provider = Provider::empty();
     /// provider.push(parent_provides);
     /// ```
-    pub fn push(&mut self, provides: Provides<'a>) {
+    pub fn push(&mut self, provides: Provides<'a, S>) {
         self.hierarchy.push(provides);
     }
 
-    /// Queries for a function with zero arguments. If function signatures from multiple
-    /// ancestor's `Provides` overlap, the function registered by the closest ancestor will be
-    /// returned.
-    pub fn query_0<R: 'static>(
+    /// Queries for a function with the given function names and return type. If function
+    /// signatures from multiple ancestor's `Provides` overlap, the function registered by the
+    /// closest ancestor will be returned.
+    pub fn query<R: 'static>(
         &self,
-        r_query: NameQuery,
-    ) -> Option<&(dyn Fn() -> R + Send + Sync + 'a)> {
+        names: impl Into<NameQuery>,
+    ) -> Option<&(dyn Fn(&S::Position) -> R + Send + Sync + 'a)> {
+        let names = names.into();
         self.hierarchy
             .iter()
             .rev()
-            .find_map(|provides| provides.query_0::<R>(r_query.clone()))
-    }
-
-    /// Queries for a function with one argument. If function signatures from multiple
-    /// ancestor's `Provides` overlap, the function registered by the closest ancestor will be
-    /// returned.
-    pub fn query_1<R: 'static, A: 'static>(
-        &self,
-        r_query: NameQuery,
-        a_query: NameQuery,
-    ) -> Option<&(dyn Fn(A) -> R + Send + Sync + 'a)> {
-        self.hierarchy
-            .iter()
-            .rev()
-            .find_map(|provides| provides.query_1::<R, A>(r_query.clone(), a_query.clone()))
-    }
-
-    /// Queries for a function with two arguments. If function signatures from multiple
-    /// ancestor's `Provides` overlap, the function registered by the closest ancestor will be
-    /// returned.
-    pub fn query_2<R: 'static, A1: 'static, A2: 'static>(
-        &self,
-        r_query: NameQuery,
-        a1_query: NameQuery,
-        a2_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2) -> R + Send + Sync + 'a)> {
-        self.hierarchy.iter().rev().find_map(|provides| {
-            provides.query_2::<R, A1, A2>(r_query.clone(), a1_query.clone(), a2_query.clone())
-        })
-    }
-
-    /// Queries for a function with three arguments. If function signatures from multiple
-    /// ancestor's `Provides` overlap, the function registered by the closest ancestor will be
-    /// returned.
-    pub fn query_3<R: 'static, A1: 'static, A2: 'static, A3: 'static>(
-        &self,
-        r_query: NameQuery,
-        a1_query: NameQuery,
-        a2_query: NameQuery,
-        a3_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a)> {
-        self.hierarchy.iter().rev().find_map(|provides| {
-            provides.query_3::<R, A1, A2, A3>(
-                r_query.clone(),
-                a1_query.clone(),
-                a2_query.clone(),
-                a3_query.clone(),
-            )
-        })
-    }
-
-    /// Queries for a function with four arguments. If function signatures from multiple
-    /// ancestor's `Provides` overlap, the function registered by the closest ancestor will be
-    /// returned.
-    pub fn query_4<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>(
-        &self,
-        r_query: NameQuery,
-        a1_query: NameQuery,
-        a2_query: NameQuery,
-        a3_query: NameQuery,
-        a4_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a)> {
-        self.hierarchy.iter().rev().find_map(|provides| {
-            provides.query_4::<R, A1, A2, A3, A4>(
-                r_query.clone(),
-                a1_query.clone(),
-                a2_query.clone(),
-                a3_query.clone(),
-                a4_query.clone(),
-            )
-        })
-    }
-}
-
-impl<'a> Default for Provider<'a> {
-    fn default() -> Self {
-        Self::empty()
+            .find_map(|provides| provides.query::<R>(&names))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
+    use super::*;
+    use crate::RealSpace;
+    use bevy::prelude::*;
 
     #[test]
     fn test_provider_empty() {
-        let provider = Provider::empty();
-        let result = provider.query_0::<i32>(NameQuery::exact("value"));
+        let provider = Provider::<RealSpace>::empty();
+        let result = provider.query::<()>("something");
         assert!(result.is_none());
     }
 
     #[test]
     fn test_provider_single_provides() {
-        let mut provides = Provides::new();
-        provides.add_0(|| 42i32, Names::from("value"));
-
+        let mut provides = Provides::<RealSpace>::new();
+        provides.add("constant answer", |_position: &Vec3| 42);
         let provider = Provider::hierarchy(vec![provides]);
-        let result = provider.query_0::<i32>(NameQuery::exact("value"));
+        let result = provider.query::<i32>("constant answer");
         assert!(result.is_some());
-        assert_eq!(result.unwrap()(), 42);
+        let constant_answer = result.unwrap();
+        assert_eq!(constant_answer(&Vec3::ZERO), 42);
     }
 
     #[test]
     fn test_provider_precedence() {
-        let mut grandparent_provides = Provides::new();
-        grandparent_provides.add_0(|| 100i32, Names::from("value"));
-
+        let mut grandparent_provides = Provides::<RealSpace>::new();
+        grandparent_provides.add("constant answer", |_position: &Vec3| 100);
         let mut parent_provides = Provides::new();
-        parent_provides.add_0(|| 42i32, Names::from("value"));
-
+        parent_provides.add("constant answer", |_position: &Vec3| 42);
         let provider = Provider::hierarchy(vec![grandparent_provides, parent_provides]);
-        let result = provider.query_0::<i32>(NameQuery::exact("value"));
+        let result = provider.query::<i32>("constant answer");
         assert!(result.is_some());
-        assert_eq!(result.unwrap()(), 42);
+        let constant_answer = result.unwrap();
+        assert_eq!(constant_answer(&Vec3::ZERO), 42);
     }
 
     #[test]
     fn test_provider_fallback_to_ancestor() {
-        let mut grandparent_provides = Provides::new();
-        grandparent_provides.add_0(|| 0i32, Names::from("zero"));
-
+        let mut grandparent_provides = Provides::<RealSpace>::new();
+        grandparent_provides.add("zero", |_position: &Vec3| 0);
         let mut parent_provides = Provides::new();
-        parent_provides.add_1(|x: i32| x * 0, Names::from("zero"), Names::from("x"));
-
+        parent_provides.add("zero", |_position: &Vec3| 0.0);
         let provider = Provider::hierarchy(vec![grandparent_provides, parent_provides]);
-        let result = provider.query_0::<i32>(NameQuery::exact("zero"));
+        let result = provider.query::<i32>("zero");
         assert!(result.is_some());
-        assert_eq!(result.unwrap()(), 0);
+        let zero = result.unwrap();
+        assert_eq!(zero(&Vec3::ZERO), 0);
     }
 
     #[test]
     fn test_provider_push() {
-        let mut provider = Provider::empty();
-
+        let mut provider = Provider::<RealSpace>::empty();
         let mut grandparent_provides = Provides::new();
-        grandparent_provides.add_0(|| 100i32, Names::from("value"));
+        grandparent_provides.add("constant answer", |_position: &Vec3| 100);
         provider.push(grandparent_provides);
-
         let mut parent_provides = Provides::new();
-        parent_provides.add_0(|| 42i32, Names::from("value"));
+        parent_provides.add("constant answer", |_position: &Vec3| 42);
         provider.push(parent_provides);
-
-        let result = provider.query_0::<i32>(NameQuery::exact("value"));
+        let result = provider.query::<i32>("constant answer");
         assert!(result.is_some());
-        assert_eq!(result.unwrap()(), 42);
+        let constant_answer = result.unwrap();
+        assert_eq!(constant_answer(&Vec3::ZERO), 42);
     }
 }

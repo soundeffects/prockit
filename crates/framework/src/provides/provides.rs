@@ -1,5 +1,6 @@
-use super::{NameQuery, NamedType, NamedTypeQuery, Names, Signature, SignatureQuery};
-use std::marker::PhantomData;
+use super::{NameQuery, Names};
+use crate::Space;
+use std::{any::TypeId, marker::PhantomData};
 
 /// Internal storage element of a `Provides` struct, encapsulating a registered function along
 /// with its signature. The function is type-erased and stored as a raw pointer, to be cast back
@@ -8,7 +9,8 @@ use std::marker::PhantomData;
 /// SAFETY: The `function_ptr` is a leaked Box (`Box<dyn Fn(...) -> ...>`) and must be dropped
 /// manually.
 struct FunctionEntry<'a> {
-    signature: Signature,
+    names: Names,
+    return_type: TypeId,
     function: *const (),
     drop: fn(*const ()),
     _lifetime: PhantomData<&'a ()>,
@@ -24,40 +26,30 @@ impl Drop for FunctionEntry<'_> {
     }
 }
 
-/// A registry for functions that can be looked up by function signature with
-/// many names associated with each type.
-///
-/// It is designed for maximum discoverability, where authors and users of
-/// functions who are not necessarily aware of each other are given fallbacks
-/// for finding desired functions.
+/// A registry for spatial sampling functions that can be looked up by function name and type.
 ///
 /// # Examples
 /// ```
-/// # use prockit_framework::{Provides, Names, NameQuery};
-/// let mut provides = Provides::new();
+/// # use prockit_framework::{Provides, Names, NameQuery, RealSpace};
+/// let mut provides = Provides::<RealSpace>::new();
 ///
-/// fn add(x: i32, y: i32) -> i32 { x + y }
+/// fn increment(position: &Vec3) -> Vec3 { position + Vec3::splat(1.0) }
 ///
-/// provides.add_2(
-///     add,
-///     Names::new(["sum", "add", "addition"]), // First is the return/function names
-///     Names::new(["x", "a", "first"]),        // Following are each argument's names...
-///     Names::new(["y", "b", "second"])
+/// provides.add(
+///     "increment",
+///     increment
 /// );
 ///
-/// let func = provides.query_2::<i32, i32, i32>(
-///     NameQuery::exact("sum"),                    // First is the return/function query
-///     NameQuery::from("x"),                       // Following are each argument's queries...
-///     NameQuery::from_pattern("sec.*").unwrap(),  // `NameQuery` can be a regular expression!
-/// ).unwrap();
+/// let increment = provides.query::<Vec3>("increment").unwrap();
 ///
-/// assert_eq!(func(3, 4), 7);
+/// assert_eq!(increment(&Vec3::splat(1.0)), Vec3::splat(2.0));
 /// ```
-pub struct Provides<'a> {
+pub struct Provides<'a, S: Space> {
     entries: Vec<FunctionEntry<'a>>,
+    space_type_data: PhantomData<S>,
 }
 
-impl<'a> Provides<'a> {
+impl<'a, S: Space> Provides<'a, S> {
     /// Creates a new, empty `Provides` registry.
     ///
     /// # Examples
@@ -68,6 +60,7 @@ impl<'a> Provides<'a> {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            space_type_data: PhantomData,
         }
     }
 
@@ -76,22 +69,22 @@ impl<'a> Provides<'a> {
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provides, Names};
-    /// let mut provides = Provides::new();
+    /// # use prockit_framework::{Provides, Names, RealSpace};
+    /// let mut provides = Provides::<RealSpace>::new();
     ///
-    /// fn zero() -> f64 { 0.0 }
+    /// fn constant_zero(position: &Vec3) -> f64 { 0.0 }
     ///
-    /// provides.add_0(
-    ///     zero,
-    ///     Names::from("zero"),
+    /// provides.add(
+    ///     "constant zero",
+    ///     constant_zero
     /// );
     /// ```
-    pub fn add_0<R: 'static>(
+    pub fn add<R: 'static>(
         &mut self,
-        function: impl Fn() -> R + Send + Sync + 'a,
-        r_names: Names,
+        names: impl Into<Names>,
+        function: impl Fn(&S::Position) -> R + Send + Sync + 'a,
     ) {
-        let boxed: Box<dyn Fn() -> R + Send + Sync + 'a> = Box::new(function);
+        let boxed: Box<dyn Fn(&S::Position) -> R + Send + Sync + 'a> = Box::new(function);
 
         fn drop<R: 'static>(function: *const ()) {
             // SAFETY: function was created from Box::into_raw of matching function signature
@@ -101,534 +94,109 @@ impl<'a> Provides<'a> {
         }
 
         self.entries.push(FunctionEntry {
-            signature: Signature::new(NamedType::new::<R>(r_names), vec![]),
+            names: names.into(),
+            return_type: TypeId::of::<R>(),
             function: Box::into_raw(Box::new(boxed)) as *const (),
             drop: drop::<R>,
             _lifetime: std::marker::PhantomData,
         });
     }
 
-    /// Registers any function type with one argument. Expects a set of names for the
-    /// return type, followed by the argument type.
+    /// Queries the registry for a function of the specified return type and names. Returns a
+    /// reference to the function if found, or `None` if no match exists.
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provides, Names};
-    /// let mut provides = Provides::new();
+    /// # use prockit_framework::{Provides, Names, NameQuery, RealSpace};
+    /// let mut provides = Provides::<RealSpace>::new();
     ///
-    /// // Static function
-    /// fn double(x: i32) -> i32 { x * 2 }
-    /// provides.add_1(double, Names::from("double"), Names::from("x"));
+    /// fn constant_zero(position: &Vec3) -> f64 { 0.0 }
     ///
-    /// // Closure with captured environment
-    /// let multiplier = 3;
-    /// provides.add_1(
-    ///     move |x: i32| x * multiplier,
-    ///     Names::from("triple"),
-    ///     Names::from("x")
-    /// );
-    /// ```
-    pub fn add_1<R: 'static, A: 'static>(
-        &mut self,
-        function: impl Fn(A) -> R + Send + Sync + 'a,
-        r_names: Names,
-        a_names: Names,
-    ) {
-        let boxed: Box<dyn Fn(A) -> R + Send + Sync + 'a> = Box::new(function);
-
-        fn drop<R: 'static, A: 'static>(function: *const ()) {
-            // SAFETY: function was created from Box::into_raw of matching function signature
-            unsafe {
-                let _ = Box::from_raw(function as *mut Box<dyn Fn(A) -> R + Send + Sync>);
-            }
-        }
-
-        self.entries.push(FunctionEntry {
-            signature: Signature::new(
-                NamedType::new::<R>(r_names),
-                vec![NamedType::new::<A>(a_names)],
-            ),
-            function: Box::into_raw(Box::new(boxed)) as *const (),
-            drop: drop::<R, A>,
-            _lifetime: std::marker::PhantomData,
-        });
-    }
-
-    /// Registers any function type with two arguments. Expects a set of names for the
-    /// return type, followed by names for the two argument types.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names};
-    /// let mut provides = Provides::new();
-    ///
-    /// // Static function
-    /// fn add(x: i32, y: i32) -> i32 { x + y }
-    /// provides.add_2(add, Names::from("sum"), Names::from("x"), Names::from("y"));
-    ///
-    /// // Closure with captured environment
-    /// let offset = 10;
-    /// provides.add_2(
-    ///     move |x: i32, y: i32| x + y + offset,
-    ///     Names::from("sum_with_offset"),
-    ///     Names::from("x"),
-    ///     Names::from("y")
-    /// );
-    /// ```
-    pub fn add_2<R: 'static, A1: 'static, A2: 'static>(
-        &mut self,
-        function: impl Fn(A1, A2) -> R + Send + Sync + 'a,
-        r_names: Names,
-        a1_names: Names,
-        a2_names: Names,
-    ) {
-        let boxed: Box<dyn Fn(A1, A2) -> R + Send + Sync + 'a> = Box::new(function);
-
-        fn drop<R: 'static, A1: 'static, A2: 'static>(function: *const ()) {
-            // SAFETY: function was created from Box::into_raw of matching function signature
-            unsafe {
-                let _ = Box::from_raw(function as *mut Box<dyn Fn(A1, A2) -> R + Send + Sync>);
-            }
-        }
-
-        self.entries.push(FunctionEntry {
-            signature: Signature::new(
-                NamedType::new::<R>(r_names),
-                vec![
-                    NamedType::new::<A1>(a1_names),
-                    NamedType::new::<A2>(a2_names),
-                ],
-            ),
-            function: Box::into_raw(Box::new(boxed)) as *const (),
-            drop: drop::<R, A1, A2>,
-            _lifetime: std::marker::PhantomData,
-        });
-    }
-
-    /// Registers any function type with three arguments. Expects a set of names for the
-    /// return type, followed by names for the argument types.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn multiply_add(x: i32, y: i32, z: i32) -> i32 { x * y + z }
-    /// provides.add_3(
-    ///     multiply_add,
-    ///     Names::from("fma"),
-    ///     Names::from("x"),
-    ///     Names::from("y"),
-    ///     Names::from("z")
-    /// );
-    /// ```
-    pub fn add_3<R: 'static, A1: 'static, A2: 'static, A3: 'static>(
-        &mut self,
-        function: impl Fn(A1, A2, A3) -> R + Send + Sync + 'a,
-        r_names: Names,
-        a1_names: Names,
-        a2_names: Names,
-        a3_names: Names,
-    ) {
-        let boxed: Box<dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a> = Box::new(function);
-
-        fn drop<R: 'static, A1: 'static, A2: 'static, A3: 'static>(function: *const ()) {
-            // SAFETY: function was created from Box::into_raw of matching function signature
-            unsafe {
-                let _ = Box::from_raw(function as *mut Box<dyn Fn(A1, A2, A3) -> R + Send + Sync>);
-            }
-        }
-
-        self.entries.push(FunctionEntry {
-            signature: Signature::new(
-                NamedType::new::<R>(r_names),
-                vec![
-                    NamedType::new::<A1>(a1_names),
-                    NamedType::new::<A2>(a2_names),
-                    NamedType::new::<A3>(a3_names),
-                ],
-            ),
-            function: Box::into_raw(Box::new(boxed)) as *const (),
-            drop: drop::<R, A1, A2, A3>,
-            _lifetime: PhantomData,
-        });
-    }
-
-    /// Registers any function type with four arguments. Expects a set of names for the
-    /// return type, followed by names for all arguments.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn blend(r: u8, g: u8, b: u8, a: u8) -> u32 {
-    ///     ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-    /// }
-    /// provides.add_4(
-    ///     blend,
-    ///     Names::from("color"),
-    ///     Names::from("r"),
-    ///     Names::from("g"),
-    ///     Names::from("b"),
-    ///     Names::from("a")
-    /// );
-    /// ```
-    pub fn add_4<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>(
-        &mut self,
-        function: impl Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a,
-        r_names: Names,
-        a1_names: Names,
-        a2_names: Names,
-        a3_names: Names,
-        a4_names: Names,
-    ) {
-        let boxed: Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a> = Box::new(function);
-
-        fn drop<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>(
-            function: *const (),
-        ) {
-            // SAFETY: function was created from Box::into_raw of matching function signature
-            unsafe {
-                let _ =
-                    Box::from_raw(function as *mut Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync>);
-            }
-        }
-
-        self.entries.push(FunctionEntry {
-            signature: Signature::new(
-                NamedType::new::<R>(r_names),
-                vec![
-                    NamedType::new::<A1>(a1_names),
-                    NamedType::new::<A2>(a2_names),
-                    NamedType::new::<A3>(a3_names),
-                    NamedType::new::<A4>(a4_names),
-                ],
-            ),
-            function: Box::into_raw(Box::new(boxed)) as *const (),
-            drop: drop::<R, A1, A2, A3, A4>,
-            _lifetime: PhantomData,
-        });
-    }
-
-    /// Queries the registry for a function that takes zero arguments. Expects a `NameQuery`
-    /// for the return type names.
-    ///
-    /// Returns a reference to the function if found, or `None` if no match exists.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names, NameQuery};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn zero() -> i32 { 0 }
-    ///
-    /// provides.add_0(
-    ///     zero,
-    ///     Names::from("zero")
+    /// provides.add(
+    ///     "constant zero"
+    ///     constant_zero,
     /// );
     ///
-    /// let zero = provides.query_0::<i32>(
-    ///     NameQuery::exact("zero"),
-    /// ).unwrap();
+    /// let queried_constant_zero = provides
+    ///     .query::<f64>(&NameQuery::exact("constant zero"))
+    ///     .unwrap();
     ///
-    /// assert_eq!(zero(), 0);
+    /// assert_eq!(queried_constant_zero(), 0.0);
     /// ```
-    pub fn query_0<R: 'static>(
+    pub fn query<R: 'static>(
         &self,
-        r_query: NameQuery,
-    ) -> Option<&(dyn Fn() -> R + Send + Sync + 'a)> {
-        let query = SignatureQuery::new(NamedTypeQuery::new::<R>(r_query), vec![]);
+        name_query: &NameQuery,
+    ) -> Option<&(dyn Fn(&S::Position) -> R + Send + Sync + 'a)> {
         self.entries
             .iter()
-            .find(|entry| query.matches(&entry.signature))
-            .map(|entry| {
-                // SAFETY: match guarantees the function pointer follows the casted signature
-                unsafe {
-                    let boxed = &*(entry.function as *const Box<dyn Fn() -> R + Send + Sync + 'a>);
-                    boxed.as_ref()
-                }
+            .find(|entry| {
+                entry.return_type == TypeId::of::<R>() && name_query.matches(&entry.names)
             })
-    }
-
-    /// Queries the registry for a function with one argument matching the specified
-    /// return type and argument type names.
-    ///
-    /// Returns a reference to the function if found, or `None` if no match exists.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names, NameQuery};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn square(x: i32) -> i32 { x * x }
-    /// provides.add_1(square, Names::from("square"), Names::from("x"));
-    ///
-    /// let func = provides.query_1::<i32, i32>(
-    ///     NameQuery::exact("square"),
-    ///     NameQuery::exact("x")
-    /// ).unwrap();
-    ///
-    /// assert_eq!(func(5), 25);
-    /// ```
-    pub fn query_1<R: 'static, A: 'static>(
-        &self,
-        r_query: NameQuery,
-        a_query: NameQuery,
-    ) -> Option<&(dyn Fn(A) -> R + Send + Sync + 'a)> {
-        let query = SignatureQuery::new(
-            NamedTypeQuery::new::<R>(r_query),
-            vec![NamedTypeQuery::new::<A>(a_query)],
-        );
-        self.entries
-            .iter()
-            .find(|entry| query.matches(&entry.signature))
-            .map(|entry| {
-                // SAFETY: match guarantees the function pointer follows the casted signature
-                unsafe {
-                    let boxed = &*(entry.function as *const Box<dyn Fn(A) -> R + Send + Sync + 'a>);
-                    boxed.as_ref()
-                }
-            })
-    }
-
-    /// Queries the registry for a function with two arguments matching the specified
-    /// return names followed by argument names.
-    ///
-    /// Returns a reference to the function if found, or `None` if no match exists.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names, NameQuery};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn add(x: i32, y: i32) -> i32 { x + y }
-    /// provides.add_2(add, Names::from("sum"), Names::from("x"), Names::from("y"));
-    ///
-    /// let func = provides.query_2::<i32, i32, i32>(
-    ///     NameQuery::exact("sum"),
-    ///     NameQuery::exact("x"),
-    ///     NameQuery::exact("y")
-    /// ).unwrap();
-    ///
-    /// assert_eq!(func(3, 4), 7);
-    /// ```
-    pub fn query_2<R: 'static, A1: 'static, A2: 'static>(
-        &self,
-        r_query: NameQuery,
-        a1_query: NameQuery,
-        a2_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2) -> R + Send + Sync + 'a)> {
-        let query = SignatureQuery::new(
-            NamedTypeQuery::new::<R>(r_query),
-            vec![
-                NamedTypeQuery::new::<A1>(a1_query),
-                NamedTypeQuery::new::<A2>(a2_query),
-            ],
-        );
-        self.entries
-            .iter()
-            .find(|entry| query.matches(&entry.signature))
-            .map(|entry| {
-                // SAFETY: match guarantees the function pointer follows the casted signature
-                unsafe {
-                    let boxed =
-                        &*(entry.function as *const Box<dyn Fn(A1, A2) -> R + Send + Sync + 'a>);
-                    boxed.as_ref()
-                }
-            })
-    }
-
-    /// Queries the registry for a function with three arguments matching the specified
-    /// return names followed by argument names.
-    ///
-    /// Returns a reference to the function if found, or `None` if no match exists.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names, NameQuery};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn multiply_add(x: i32, y: i32, z: i32) -> i32 { x * y + z }
-    /// provides.add_3(
-    ///     multiply_add,
-    ///     Names::from("fma"),
-    ///     Names::from("x"),
-    ///     Names::from("y"),
-    ///     Names::from("z")
-    /// );
-    ///
-    /// let func = provides.query_3::<i32, i32, i32, i32>(
-    ///     NameQuery::exact("fma"),
-    ///     NameQuery::exact("x"),
-    ///     NameQuery::exact("y"),
-    ///     NameQuery::exact("z")
-    /// ).unwrap();
-    ///
-    /// assert_eq!(func(3, 4, 5), 17);
-    /// ```
-    pub fn query_3<R: 'static, A1: 'static, A2: 'static, A3: 'static>(
-        &self,
-        r_query: NameQuery,
-        a1_query: NameQuery,
-        a2_query: NameQuery,
-        a3_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a)> {
-        let query = SignatureQuery::new(
-            NamedTypeQuery::new::<R>(r_query),
-            vec![
-                NamedTypeQuery::new::<A1>(a1_query),
-                NamedTypeQuery::new::<A2>(a2_query),
-                NamedTypeQuery::new::<A3>(a3_query),
-            ],
-        );
-        self.entries
-            .iter()
-            .find(|entry| query.matches(&entry.signature))
             .map(|entry| {
                 // SAFETY: match guarantees the function pointer follows the casted signature
                 unsafe {
                     let boxed = &*(entry.function
-                        as *const Box<dyn Fn(A1, A2, A3) -> R + Send + Sync + 'a>);
+                        as *const Box<dyn Fn(&S::Position) -> R + Send + Sync + 'a>);
                     boxed.as_ref()
                 }
             })
-    }
-
-    /// Queries the registry for a function with four arguments matching the specified
-    /// return names followed by argument names.
-    ///
-    /// Returns a reference to the function if found, or `None` if no match exists.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names, NameQuery};
-    /// let mut provides = Provides::new();
-    ///
-    /// fn blend(r: u8, g: u8, b: u8, a: u8) -> u32 {
-    ///     ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-    /// }
-    /// provides.add_4(
-    ///     blend,
-    ///     Names::from("color"),
-    ///     Names::from("r"),
-    ///     Names::from("g"),
-    ///     Names::from("b"),
-    ///     Names::from("a")
-    /// );
-    ///
-    /// let func = provides.query_4::<u32, u8, u8, u8, u8>(
-    ///     NameQuery::exact("color"),
-    ///     NameQuery::exact("r"),
-    ///     NameQuery::exact("g"),
-    ///     NameQuery::exact("b"),
-    ///     NameQuery::exact("a")
-    /// ).unwrap();
-    ///
-    /// assert_eq!(func(255, 128, 64, 200), 3372187712);
-    /// ```
-    pub fn query_4<R: 'static, A1: 'static, A2: 'static, A3: 'static, A4: 'static>(
-        &self,
-        r_query: NameQuery,
-        a1_query: NameQuery,
-        a2_query: NameQuery,
-        a3_query: NameQuery,
-        a4_query: NameQuery,
-    ) -> Option<&(dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a)> {
-        let query = SignatureQuery::new(
-            NamedTypeQuery::new::<R>(r_query),
-            vec![
-                NamedTypeQuery::new::<A1>(a1_query),
-                NamedTypeQuery::new::<A2>(a2_query),
-                NamedTypeQuery::new::<A3>(a3_query),
-                NamedTypeQuery::new::<A4>(a4_query),
-            ],
-        );
-        self.entries
-            .iter()
-            .find(|entry| query.matches(&entry.signature))
-            .map(|entry| {
-                // SAFETY: match guarantees the function pointer follows the casted signature
-                unsafe {
-                    let boxed = &*(entry.function
-                        as *const Box<dyn Fn(A1, A2, A3, A4) -> R + Send + Sync + 'a>);
-                    boxed.as_ref()
-                }
-            })
-    }
-}
-
-impl<'a> Default for Provides<'a> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    use crate::RealSpace;
+    use bevy::prelude::*;
 
     #[test]
     fn test_provides_add_and_query() {
-        let mut provides = Provides::new();
+        let mut provides = Provides::<RealSpace>::new();
 
-        fn add(x: i32, y: i32) -> i32 {
-            x + y
+        fn distance(position: &Vec3) -> f32 {
+            position.distance(Vec3::ZERO)
         }
 
-        provides.add_2(add, Names::from("sum"), Names::from("x"), Names::from("y"));
+        provides.add("distance", distance);
 
-        let result = provides.query_2::<i32, i32, i32>(
-            NameQuery::from("sum"),
-            NameQuery::from("x"),
-            NameQuery::from("y"),
-        );
-
+        let result = provides.query::<f32>(&NameQuery::exact("distance"));
         assert!(result.is_some());
+
         let func = result.unwrap();
-        assert_eq!(func(2, 3), 5);
+        assert_eq!(func(&Vec3::new(5.0, 0.0, 0.0)), 5.0);
     }
 
     #[test]
     fn test_provides_query_not_found() {
-        let provides = Provides::new();
-
-        let result = provides.query_2::<i32, i32, i32>(
-            NameQuery::from("sum"),
-            NameQuery::from("x"),
-            NameQuery::from("y"),
-        );
-
+        let provides = Provides::<RealSpace>::new();
+        let result = provides.query::<()>(&NameQuery::exact("something"));
         assert!(result.is_none());
     }
 
     #[test]
     fn test_provides_lifetimes_and_closure() {
-        fn take_provides_and_test(provides: &Provides<'_>) {
-            let function = provides
-                .query_1::<i32, i32>(NameQuery::exact("multiply"), NameQuery::exact("input"));
+        fn take_provides_and_test(provides: &Provides<'_, RealSpace>) {
+            let function = provides.query::<f32>(&NameQuery::exact("distance"));
             assert!(function.is_some());
-            assert_eq!(function.unwrap()(2), 4);
+            assert_eq!(function.unwrap()(&Vec3::ZERO), 4.0);
         }
 
-        fn create_provides() -> Provides<'static> {
-            struct Multiplier {
-                value: i32,
+        fn create_provides() -> Provides<'static, RealSpace> {
+            struct Spot {
+                coordinates: Vec3,
             }
 
-            impl Multiplier {
-                fn multiply(&self, input: i32) -> i32 {
-                    self.value * input
+            impl Spot {
+                fn distance(&self, input: &Vec3) -> f32 {
+                    input.distance(self.coordinates)
                 }
             }
 
-            let mut provides = Provides::new();
-            let multiplier = Multiplier { value: 2 };
-            provides.add_1(
-                move |input| multiplier.multiply(input),
-                Names::from("multiply"),
-                Names::from("input"),
-            );
+            let mut provides = Provides::<RealSpace>::new();
+            let spot = Spot {
+                coordinates: Vec3::new(4.0, 0.0, 0.0),
+            };
+            provides.add("distance", move |input| spot.distance(input));
             provides
         }
 
@@ -636,48 +204,29 @@ mod tests {
     }
 
     #[test]
-    fn test_overloading() {
-        struct Data {
-            value: i32,
+    fn test_conflict() {
+        struct Multiplier {
+            value: f32,
         }
 
-        impl Data {
-            fn add_multi(&self, a: i32, b: i32, c: i32) -> i32 {
-                self.value + a + b + c
-            }
-
-            fn add(&self, x: i32) -> i32 {
-                self.value + x
+        impl Multiplier {
+            fn multiply(&self, position: &Vec3) -> Vec3 {
+                position * self.value
             }
         }
 
-        let data = Data { value: 100 };
-        let mut provides = Provides::new();
+        let mut provides = Provides::<RealSpace>::new();
 
-        provides.add_3(
-            |a, b, c| data.add_multi(a, b, c),
-            Names::from("add"),
-            Names::from("a"),
-            Names::from("b"),
-            Names::from("c"),
-        );
+        let grandparent = Multiplier { value: 2.0 };
+        provides.add("multiply", move |position| grandparent.multiply(position));
 
-        provides.add_1(|x| data.add(x), Names::from("add"), Names::from("x"));
+        let parent = Multiplier { value: 3.0 };
+        provides.add("multiply", move |position| parent.multiply(position));
 
-        let add_multi = provides
-            .query_3::<i32, i32, i32, i32>(
-                NameQuery::exact("add"),
-                NameQuery::exact("a"),
-                NameQuery::exact("b"),
-                NameQuery::exact("c"),
-            )
+        let multiply = provides
+            .query::<Vec3>(&NameQuery::exact("multiply"))
             .unwrap();
 
-        let add = provides
-            .query_1::<i32, i32>(NameQuery::exact("add"), NameQuery::exact("x"))
-            .unwrap();
-
-        assert_eq!(add_multi(1, 2, 3), 106);
-        assert_eq!(add(1), 101);
+        assert_eq!(multiply(&Vec3::splat(1.0)), Vec3::splat(3.0));
     }
 }

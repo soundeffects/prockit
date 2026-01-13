@@ -1,8 +1,8 @@
 mod plugins;
 mod provides;
-mod rework;
+mod space;
 
-pub use plugins::{
-    ChildCommands, ProceduralNode, ProckitFrameworkConfig, ProckitFrameworkPlugin, Viewer,
-};
+pub use plugins::{ProceduralNode, ProckitFrameworkPlugin};
 pub use provides::{NameQuery, Names, Provider, Provides};
+use space::{Allocations, RegisterSpace, SpawnNode};
+pub use space::{NodeList, RealSpace, Space, Viewer};

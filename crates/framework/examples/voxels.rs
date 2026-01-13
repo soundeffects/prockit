@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use prockit_framework::{
-    ChildCommands, Names, ProceduralNode, ProckitFrameworkPlugin, Provider, Provides,
+    ChildCommands, ProceduralNode, ProckitFrameworkPlugin, Provider, Provides, RealSpace,
 };
 
 pub const CHUNK_LENGTH: usize = 16;
@@ -48,20 +48,17 @@ impl Chunk {
         z * CHUNK_LENGTH * CHUNK_LENGTH + y * CHUNK_LENGTH + x
     }
 
-    fn opaque(&self, x: usize, y: usize, z: usize) -> bool {
+    fn opaque(&self, position: &Vec3) -> bool {
+        let x = position.x.round() as usize;
+        let y = position.y.round() as usize;
+        let z = position.z.round() as usize;
         self.voxels[Self::linearize(x, y, z)] == Voxel::Full
     }
 }
 
-impl ProceduralNode for Chunk {
-    fn register_provides<'a>(&'a self, provides: &mut Provides<'a>) {
-        provides.add_3(
-            |x, y, z| self.opaque(x, y, z),
-            Names::from("opaque"),
-            Names::from("x"),
-            Names::from("y"),
-            Names::from("z"),
-        );
+impl ProceduralNode<RealSpace> for Chunk {
+    fn provides<'a>(&'a self, instance: &mut Provides<'a, RealSpace>) {
+        instance.add("opaque", |position: &Vec3| self.opaque(position));
     }
 
     fn should_subdivide(&self) -> bool {
@@ -73,7 +70,7 @@ impl ProceduralNode for Chunk {
     fn subdivide(
         &self,
         transform: &GlobalTransform,
-        _provider: &Provider<'_>,
+        _provider: &Provider<'_, RealSpace>,
         mut child_commands: ChildCommands,
     ) {
         let scale = transform.scale().max_element() / 2.0;
@@ -92,6 +89,14 @@ impl ProceduralNode for Chunk {
             ));
         }
     }
+
+    fn in_bounds(&self, _position: Vec3) -> bool {
+        false
+    }
+
+    fn bound_points(&self) -> Vec<Vec3> {
+        Vec::new()
+    }
 }
 
 fn setup(mut commands: Commands) {
@@ -105,7 +110,7 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
-            ProckitFrameworkPlugin::new().with::<Chunk>(),
+            ProckitFrameworkPlugin::new().with::<_, Chunk>(),
         ))
         .add_systems(Startup, setup)
         .run();

@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use regex::Regex;
 
 /// A collection of string names that can be associated with types or functions.
 /// A single entity may be referenced by multiple aliases, improving discoverability
@@ -94,66 +94,112 @@ impl<const N: usize> From<[String; N]> for Names {
     }
 }
 
-/// A `TypeId` paired with a set of `Names`, enabling type-safe name-based
-/// lookups for `Provides`.
-#[derive(Clone, Debug)]
-pub struct NamedType {
-    type_id: TypeId,
-    names: Names,
+/// A query for matching against name collections using regex patterns or exact
+/// matches.
+///
+/// # Examples
+///
+/// ```
+/// # use prockit_framework::{NameQuery, Names};
+/// let exact = NameQuery::exact("add");
+/// let names = Names::from("add");
+/// assert!(exact.matches(&names));
+///
+/// let pattern = NameQuery::from_pattern("get_.*").unwrap();
+/// let getter_names = Names::from("get_value");
+/// assert!(pattern.matches(&getter_names));
+/// ```
+#[derive(Clone)]
+pub struct NameQuery {
+    regex: Regex,
 }
 
-impl NamedType {
-    /// Creates a new `NamedType` for type `T` with the given names.
-    pub fn new<T: 'static>(names: impl Into<Names>) -> Self {
+impl NameQuery {
+    /// Creates a new name query from a compiled regex pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use prockit_framework::{NameQuery, Names};
+    /// # use regex::Regex;
+    /// // using regex::Regex
+    /// let regex = Regex::new("test.*").unwrap();
+    /// let query = NameQuery::new(regex);
+    /// assert!(query.matches(&Names::from("testing")));
+    /// ```
+    pub fn new(regex: Regex) -> Self {
+        Self { regex }
+    }
+
+    /// Creates a name query from a regex pattern string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use prockit_framework::{NameQuery, Names};
+    /// let query = NameQuery::from_pattern("calc_.*").unwrap();
+    /// assert!(query.matches(&Names::from("calc_sum")));
+    /// assert!(!query.matches(&Names::from("compute_sum")));
+    /// ```
+    pub fn from_pattern(pattern: &str) -> Result<Self, regex::Error> {
+        Ok(Self {
+            regex: Regex::new(pattern)?,
+        })
+    }
+
+    /// Creates a query that matches a name exactly.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use prockit_framework::{NameQuery, Names};
+    /// let query = NameQuery::exact("divide");
+    /// assert!(query.matches(&Names::from("divide")));
+    /// assert!(!query.matches(&Names::from("division")));
+    /// ```
+    pub fn exact(name: &str) -> Self {
         Self {
-            type_id: TypeId::of::<T>(),
-            names: names.into(),
+            regex: Regex::new(&format!("^{}$", regex::escape(name)))
+                .expect("Escaped exact name should be valid regex"),
         }
     }
 
-    /// Returns the `TypeId` of the associated type.
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-
-    /// Returns a reference to the names collection.
-    pub fn names(&self) -> &Names {
-        &self.names
+    /// Checks if this query matches any name in the provided `Names` collection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use prockit_framework::{NameQuery, Names};
+    /// let query = NameQuery::exact("process");
+    /// let names = Names::new(["handle", "process", "execute"]);
+    /// assert!(query.matches(&names));
+    /// ```
+    pub fn matches(&self, names: &Names) -> bool {
+        names.iter().any(|name| self.regex.is_match(name))
     }
 }
 
-/// Represents a function signature with `NamedType`s for the return value and arguments.
-#[derive(Clone, Debug)]
-pub struct Signature {
-    return_type: NamedType,
-    arg_types: Vec<NamedType>,
+impl From<&str> for NameQuery {
+    fn from(name: &str) -> Self {
+        Self::exact(name)
+    }
 }
 
-impl Signature {
-    /// Creates a new function signature with the specified return and argument
-    /// `NamedType`s.
-    pub fn new(return_type: NamedType, arg_types: Vec<NamedType>) -> Self {
-        Self {
-            return_type,
-            arg_types,
-        }
+impl From<String> for NameQuery {
+    fn from(name: String) -> Self {
+        Self::exact(&name)
     }
+}
 
-    /// Returns the return type of this function signature.
-    pub fn return_type(&self) -> &NamedType {
-        &self.return_type
-    }
-
-    /// Returns a slice of the argument types for this function signature.
-    pub fn arg_types(&self) -> &[NamedType] {
-        &self.arg_types
+impl From<Regex> for NameQuery {
+    fn from(regex: Regex) -> Self {
+        Self::new(regex)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::any::TypeId;
 
     #[test]
     fn test_single_name() {
@@ -172,17 +218,24 @@ mod tests {
     }
 
     #[test]
-    fn test_named_type() {
-        let named_type = NamedType::new::<i32>(Names::from("integer"));
-        assert_eq!(named_type.type_id(), TypeId::of::<i32>());
-        assert!(named_type.names().contains("integer"));
+    fn test_name_query_exact() {
+        let query = NameQuery::exact("test");
+        let names = Names::from("test");
+        assert!(query.matches(&names));
+
+        let other_names = Names::from("other");
+        assert!(!query.matches(&other_names));
     }
 
     #[test]
-    fn test_signature_zero_args() {
-        let sig = Signature::new(NamedType::new::<f32>(Names::from("something")), vec![]);
+    fn test_name_query_regex() {
+        let query = NameQuery::from_pattern("test.*").unwrap();
+        let names1 = Names::from("test123");
+        let names2 = Names::from("testing");
+        let names3 = Names::from("other");
 
-        assert_eq!(sig.return_type().type_id(), TypeId::of::<f32>());
-        assert_eq!(sig.arg_types().len(), 0);
+        assert!(query.matches(&names1));
+        assert!(query.matches(&names2));
+        assert!(!query.matches(&names3));
     }
 }
