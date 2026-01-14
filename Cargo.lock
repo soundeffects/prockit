@@ -1165,6 +1165,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_flycam"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bcf7c519a030ecb02ff62780f086aa57ab1b888997ca04d56dd6e322a359401"
+dependencies = [
+ "bevy 0.17.2",
+]
+
+[[package]]
 name = "bevy_gilrs"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2668,6 +2677,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
 
 [[package]]
+name = "block-mesh"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c0345520b5aa77d7d154bd578a18e7a974350931b5f41f641a7844e951b978f"
+dependencies = [
+ "ilattice",
+ "ndcopy",
+ "ndshape",
+]
+
+[[package]]
 name = "block2"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3912,6 +3932,12 @@ dependencies = [
 
 [[package]]
 name = "glam"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b8509e6791516e81c1a630d0bd7fbac36d2fa8712a9da8662e716b52d5051ca"
+
+[[package]]
+name = "glam"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e05e7e6723e3455f4818c7b26e855439f7546cf617ef669d1adedb8669e5cb9"
@@ -4271,6 +4297,15 @@ checksum = "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6"
 dependencies = [
  "unicode-bidi",
  "unicode-normalization",
+]
+
+[[package]]
+name = "ilattice"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3db9046391c0e0658a18e23877706d16e48cc8b4711702b9f703776410c2b84"
+dependencies = [
+ "glam 0.19.0",
 ]
 
 [[package]]
@@ -4825,6 +4860,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
 dependencies = [
  "getrandom 0.2.15",
+]
+
+[[package]]
+name = "ndcopy"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24f4e41b81e3f7a4b742755be1bb368a6faafc43af555fe135c36b0efe095c59"
+dependencies = [
+ "ndshape",
 ]
 
 [[package]]
@@ -5605,6 +5649,10 @@ version = "0.1.0"
 dependencies = [
  "bevy 0.17.2",
  "bevy-trait-query",
+ "bevy_flycam",
+ "block-mesh",
+ "paste",
+ "rand 0.9.2",
  "regex",
 ]
 

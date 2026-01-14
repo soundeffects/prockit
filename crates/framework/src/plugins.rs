@@ -1,7 +1,6 @@
-use super::{NodeList, Provider, Provides, RegisterSpace, Space};
-use bevy::{platform::collections::HashSet, prelude::*};
+use super::{GenerateTask, Provider, Provides, Space, Subdivisions, Thresholds, Viewer};
+use bevy::prelude::*;
 use bevy_trait_query::RegisterExt;
-use std::any::TypeId;
 
 /// `ProceduralNode` defines the interface for nodes in the procedurally-generated,
 /// level-of-detail hierarchy that can be managed by the prockit framework. See the
@@ -17,16 +16,7 @@ pub trait ProceduralNode<S: Space>: Send + Sync + 'static {
     /// Subdivides this node into higher-detail children.
     /// Called when the node is close enough to a viewer to warrant more detail.
     /// Returns `None` if the node should not subdivide.
-    fn subdivide(&self) -> Option<NodeList<S>>;
-
-    /// Returns true if the given position is within this node's bounds.
-    fn in_bounds(&self, position: S::Position) -> bool;
-
-    /// Returns the corner/boundary points of this node in global coordinates.
-    fn bound_points(&self, transform: S::GlobalTransform) -> Vec<S::Position>;
-
-    /// Returns the display size of this node (for LOD calculations).
-    fn display_size(&self) -> f32;
+    fn subdivide(&self) -> Option<Subdivisions<S>>;
 
     /// Creates a new uninitialized instance of this node type.
     fn init() -> Self
@@ -37,39 +27,58 @@ pub trait ProceduralNode<S: Space>: Send + Sync + 'static {
     fn generate(&mut self, transform: &S::GlobalTransform, provider: &Provider<S>);
 }
 
+pub const KB: usize = 1024;
+pub const MB: usize = 1024 * KB;
+pub const GB: usize = 1024 * MB;
+
 #[derive(Default)]
-pub struct ProckitFrameworkPlugin {
-    spaces: HashSet<TypeId>,
+pub struct FrameworkPlugin {
     registrations: Vec<Box<dyn Fn(&mut App) + Send + Sync>>,
 }
 
-impl ProckitFrameworkPlugin {
+impl FrameworkPlugin {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with<S: Space, Node: ProceduralNode<S> + Component>(mut self) -> Self {
-        if !self.spaces.contains(&TypeId::of::<S>()) {
-            self.registrations.push(Box::new(|app: &mut App| {
-                app.add_plugins(RegisterSpace::<S>::new());
-            }));
-        }
-        self.registrations.push(Box::new(|app: &mut App| {
-            app.register_component_as::<dyn ProceduralNode<S>, Node>()
-                .register_required_components::<Node, S::GlobalTransform>();
+    pub fn with_space<S: Space>(mut self, memory_limit: usize, free_percentage: f32) -> Self {
+        self.registrations.push(Box::new(move |app| {
+            app.insert_resource(Thresholds::<S>::new(memory_limit, free_percentage))
+                .register_required_components::<Viewer<S>, S::GlobalTransform>()
+                .add_systems(
+                    Update,
+                    (
+                        Thresholds::<S>::resample,
+                        Thresholds::<S>::recalibrate,
+                        GenerateTask::<S>::poll_tasks,
+                        GenerateTask::<S>::create_tasks,
+                    ),
+                );
         }));
         self
     }
+
+    pub fn with_node<S: Space, T: ProceduralNode<S> + Component>(mut self) -> Self {
+        self.registrations.push(Box::new(|app| {
+            app.register_component_as::<dyn ProceduralNode<S>, T>()
+                .register_required_components::<T, S::GlobalTransform>()
+                .add_systems(Startup, Self::register_hooks::<S, T>);
+        }));
+        self
+    }
+
+    fn register_hooks<S: Space, T: ProceduralNode<S> + Component>(world: &mut World) {
+        world
+            .register_component_hooks::<T>()
+            .on_add(|mut world, _| world.resource_mut::<Thresholds<S>>().add(size_of::<T>()))
+            .on_remove(|mut world, _| world.resource_mut::<Thresholds<S>>().sub(size_of::<T>()));
+    }
 }
 
-impl Plugin for ProckitFrameworkPlugin {
+impl Plugin for FrameworkPlugin {
     fn build(&self, app: &mut App) {
         for registration in &self.registrations {
             registration(app);
         }
     }
 }
-
-pub const KB: usize = 1024;
-pub const MB: usize = 1024 * KB;
-pub const GB: usize = 1024 * MB;
