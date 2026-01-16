@@ -1,4 +1,5 @@
 mod plugins;
+mod pod;
 mod provides;
 mod space;
 
