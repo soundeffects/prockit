@@ -6,34 +6,10 @@
 //! - [`FrameworkPlugin`]: The main Bevy plugin that sets up the procedural generation systems
 //! - Memory size constants ([`KB`], [`MB`], [`GB`]) for convenient configuration
 
-use super::{GenerateTask, Provider, Provides, Space, Subdivisions, Thresholds, Viewer};
+use crate::ProceduralNode;
+
+use super::{GenerateTask, Space, Viewer};
 use bevy::prelude::*;
-use bevy_trait_query::RegisterExt;
-
-/// `ProceduralNode` defines the interface for nodes in the procedurally-generated,
-/// level-of-detail hierarchy that can be managed by the prockit framework. See the
-/// documentation for each member method for more details.
-///
-/// Implementations must be `Send + Sync + 'static` to support async generation.
-#[bevy_trait_query::queryable]
-pub trait ProceduralNode<S: Space>: Send + Sync + 'static {
-    /// Registers functions this node provides to its descendants.
-    /// Functions must own their captured data (use `move` closures with cloned data).
-    fn provides(&self, instance: &mut Provides<S>);
-
-    /// Subdivides this node into higher-detail children.
-    /// Called when the node is close enough to a viewer to warrant more detail.
-    /// Returns `None` if the node should not subdivide.
-    fn subdivide(&self) -> Option<Subdivisions<S>>;
-
-    /// Creates a new uninitialized instance of this node type.
-    fn init() -> Self
-    where
-        Self: Sized;
-
-    /// Generates this node's data using the given transform and ancestral provider.
-    fn generate(&mut self, transform: &S::GlobalTransform, provider: &Provider<S>);
-}
 
 /// One kilobyte (1024 bytes) for memory configuration.
 pub const KB: usize = 1024;
@@ -205,7 +181,7 @@ impl Plugin for FrameworkPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RealSpace;
+    use crate::{Provider, Provides, RealSpace, Subdivisions};
 
     #[derive(Component, Clone)]
     struct TestNode {

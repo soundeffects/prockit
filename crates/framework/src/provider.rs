@@ -1,26 +1,22 @@
-use super::{NameQuery, Names};
-use crate::Space;
-use std::{any::Any, any::TypeId, marker::PhantomData, sync::Arc};
+use super::{NameQuery, Names, Pod, ProceduralNode, Space};
+use bevy::prelude::*;
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 
-/// Internal storage element of a `Provides` struct, encapsulating a registered function along
-/// with its signature. The function is stored as an Arc-wrapped trait object for cloning support.
-struct FunctionEntry<S: Space> {
+//TODO: Add transforms to provider
+
+/// Internal storage element of a `Provider`, for collections of functions with type-erased
+/// signatures which can be queried and returned.
+#[derive(Clone)]
+struct FunctionEntry {
     names: Names,
     return_type: TypeId,
-    /// Stores `Arc<dyn Fn(&S::Position) -> R + Send + Sync>` as a type-erased Any
+    space: TypeId,
+    /// Stores a type-erased closure of type `Box<dyn Fn(&S::Position) -> R + Send + Sync>`,
+    /// with arbitrary return type `R`.
     function: Arc<dyn Any + Send + Sync>,
-    _marker: PhantomData<S>,
-}
-
-impl<S: Space> Clone for FunctionEntry<S> {
-    fn clone(&self) -> Self {
-        Self {
-            names: self.names.clone(),
-            return_type: self.return_type,
-            function: Arc::clone(&self.function),
-            _marker: PhantomData,
-        }
-    }
 }
 
 /// A registry for spatial sampling functions that can be looked up by function name and type.
@@ -44,25 +40,19 @@ impl<S: Space> Clone for FunctionEntry<S> {
 ///
 /// assert_eq!(increment(&Vec3::splat(1.0)), Vec3::splat(2.0));
 /// ```
-pub struct Provides<S: Space> {
-    entries: Vec<FunctionEntry<S>>,
+#[derive(Clone, Component, Default)]
+pub struct Provider {
+    entries: Vec<FunctionEntry>,
 }
 
-impl<S: Space> Clone for Provides<S> {
-    fn clone(&self) -> Self {
-        Self {
-            entries: self.entries.clone(),
-        }
-    }
-}
-
-impl<S: Space> Provides<S> {
-    /// Creates a new, empty `Provides` registry.
+impl Provider {
+    /// Initializes an empty `Provides` registry.
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provides, RealSpace};
-    /// let provides = Provides::<RealSpace>::new();
+    /// # use prockit_framework::{Provides};
+    /// struct SomeType;
+    /// let provides = Provides::<SomeType>::new();
     /// ```
     pub fn new() -> Self {
         Self {
@@ -70,37 +60,11 @@ impl<S: Space> Provides<S> {
         }
     }
 
-    /// Registers any function type. Expects a set of names for the return type/function.
-    /// The function must be `'static` (own all captured data) to allow cloning and async transfer.
-    ///
-    /// # Examples
-    /// ```
-    /// # use prockit_framework::{Provides, Names, RealSpace};
-    /// # use bevy::prelude::*;
-    /// let mut provides = Provides::<RealSpace>::new();
-    ///
-    /// fn constant_zero(_position: &Vec3) -> f64 { 0.0 }
-    ///
-    /// provides.add(
-    ///     "constant zero",
-    ///     constant_zero
-    /// );
-    /// ```
-    pub fn add<R: 'static>(
-        &mut self,
-        names: impl Into<Names>,
-        function: impl Fn(&S::Position) -> R + Send + Sync + 'static,
-    ) {
-        // Wrap the function in Arc for clone support
-        let arc_fn: Arc<dyn Fn(&S::Position) -> R + Send + Sync> = Arc::new(function);
-
-        self.entries.push(FunctionEntry {
-            names: names.into(),
-            return_type: TypeId::of::<R>(),
-            // Store the Arc<dyn Fn> as Arc<dyn Any> for type erasure
-            function: Arc::new(arc_fn) as Arc<dyn Any + Send + Sync>,
-            _marker: PhantomData,
-        });
+    pub fn provides<'a, T: ProceduralNode>(&'a mut self, pod: &'a Pod<T>) -> Provides<'a, T> {
+        Provides {
+            borrowed: self,
+            pod,
+        }
     }
 
     /// Queries the registry for a function of the specified return type and names. Returns a
@@ -125,28 +89,51 @@ impl<S: Space> Provides<S> {
     ///
     /// assert_eq!(queried_constant_zero(&Vec3::ZERO), 0.0);
     /// ```
-    pub fn query<R: 'static>(
+    pub fn query<S: Space, R: 'static>(
         &self,
         name_query: &NameQuery,
-    ) -> Option<Arc<dyn Fn(&S::Position) -> R + Send + Sync>> {
+    ) -> Option<&dyn Fn(&S::Position) -> R> {
         self.entries
             .iter()
             .find(|entry| {
-                entry.return_type == TypeId::of::<R>() && name_query.matches(&entry.names)
+                entry.return_type == TypeId::of::<R>()
+                    && entry.space == TypeId::of::<S>()
+                    && name_query.matches(&entry.names)
             })
             .and_then(|entry| {
-                // Downcast from Arc<dyn Any> back to Arc<Arc<dyn Fn...>>
                 entry
                     .function
-                    .downcast_ref::<Arc<dyn Fn(&S::Position) -> R + Send + Sync>>()
-                    .cloned()
+                    .downcast_ref::<Box<dyn Fn(&S::Position) -> R>>()
             })
+            .map(|boxed| boxed.as_ref())
+    }
+
+    pub(crate) fn merge(&mut self, other: &Provider) {
+        self.entries
+            .extend(other.entries.iter().map(|entry| entry.clone()));
     }
 }
 
-impl<S: Space> Default for Provides<S> {
-    fn default() -> Self {
-        Self::new()
+pub struct Provides<'a, T: ProceduralNode> {
+    pod: &'a Pod<T>,
+    borrowed: &'a mut Provider,
+}
+
+impl<T: ProceduralNode> Provides<'_, T> {
+    pub fn add<S: Space, R: 'static>(
+        &mut self,
+        names: impl Into<Names>,
+        function: fn(&T, &S::Position) -> R,
+    ) {
+        let pod = self.pod.clone();
+        let boxed: Box<dyn Fn(&S::Position) -> R + Send + Sync> =
+            Box::new(move |input| pod.curry::<S, R>(function, input));
+        self.borrowed.entries.push(FunctionEntry {
+            names: names.into(),
+            return_type: TypeId::of::<R>(),
+            space: TypeId::of::<S>(),
+            function: Arc::new(boxed),
+        });
     }
 }
 

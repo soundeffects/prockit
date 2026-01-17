@@ -1,9 +1,17 @@
+mod generate;
+mod names;
 mod plugins;
 mod pod;
-mod provides;
-mod space;
+mod provider;
+mod resample;
+mod spaces;
+mod subdivide;
 
-pub use plugins::{FrameworkPlugin, GB, KB, MB, ProceduralNode};
-pub use provides::{NameQuery, Names, Provider, Provides};
-use space::{GenerateTask, Thresholds};
-pub use space::{PendingGenerate, RealSpace, Space, Subdivision, Subdivisions, Viewer};
+pub use names::{NameQuery, Names};
+pub use plugins::{FrameworkPlugin, GB, KB, MB};
+pub use pod::{Pod, ProceduralNode};
+pub use provider::{Provider, Provides};
+pub use resample::Viewer;
+pub use spaces::{RealSpace, Space};
+use subdivide::{EmptyNode, GenerateTask};
+pub use subdivide::{PendingGenerate, Subdivide, Subdivision};

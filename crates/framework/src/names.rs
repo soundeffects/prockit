@@ -17,7 +17,7 @@ use regex::Regex;
 /// let single = Names::from("multiply");
 /// assert!(single.contains("multiply"));
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Names {
     names: Vec<String>,
 }

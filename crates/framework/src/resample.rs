@@ -1,7 +1,6 @@
 use super::{EmptyNode, PendingGenerate, Space};
 use crate::ProceduralNode;
 use bevy::{platform::collections::HashSet, prelude::*};
-use bevy_trait_query::One;
 use std::{collections::VecDeque, marker::PhantomData};
 
 /// A component that marks an entity as a viewer for level-of-detail calculations.
@@ -333,10 +332,7 @@ mod tests {
         ));
 
         let mut count = 0;
-        for viewer in world
-            .query::<&Viewer<RealSpace>>()
-            .iter(&world)
-        {
+        for viewer in world.query::<&Viewer<RealSpace>>().iter(&world) {
             count += 1;
             assert!(viewer.priority() > 0.0);
         }
