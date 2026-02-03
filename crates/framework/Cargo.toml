@@ -11,8 +11,7 @@ documentation = "placeholder"
 
 [dependencies]
 bevy = "0.18"
-deepsize = "0.2.0"
-paste = "1.0.15"
+get-size2 = { version = "0.7.3", features = ["derive"] }
 regex = "1.12.2"
 
 [dev-dependencies]

@@ -115,7 +115,7 @@ impl GenerateTask {
     /// `subdivide()`, an [`EmptyNode`] marker is added instead.
     pub(crate) fn create_tasks<T: ProceduralNode>(
         mut commands: Commands,
-        pending_tasks: Query<(Entity, &Pod<T>, &Provider), With<PendingGenerate>>,
+        pending_tasks: Query<(Entity, &Pod<T>), With<PendingGenerate>>,
     ) {
         let task_pool = AsyncComputeTaskPool::get();
 

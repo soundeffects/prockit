@@ -1,11 +1,11 @@
+use get_size2::GetSize;
 use regex::Regex;
 
 /// A collection of string names that can be associated with types or functions.
 /// A single entity may be referenced by multiple aliases, improving discoverability
 /// of `Provides` entries.
 ///
-/// # Examples
-///
+/// # Example
 /// ```
 /// # use prockit_framework::Names;
 /// let names = Names::new(["add", "sum", "plus"]);
@@ -17,7 +17,7 @@ use regex::Regex;
 /// let single = Names::from("multiply");
 /// assert!(single.contains("multiply"));
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, GetSize, Eq, Hash, PartialEq)]
 pub struct Names {
     names: Vec<String>,
 }
@@ -25,72 +25,43 @@ pub struct Names {
 impl Names {
     /// Creates a new `Names` collection from an iterable of string-like items.
     ///
-    /// # Examples
-    ///
+    /// # Example
     /// ```
     /// # use prockit_framework::Names;
     /// let names = Names::new(["foo", "bar"]);
-    /// assert!(names.contains("foo"));
-    ///
-    /// let from_strings = Names::new(vec!["a".to_string(), "b".to_string()]);
-    /// assert!(from_strings.contains("b"));
     /// ```
-    pub fn new(names: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self {
-            names: names.into_iter().map(|s| s.into()).collect(),
-        }
-    }
-
-    /// Returns an iterator over the names as string slices.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use prockit_framework::Names;
-    /// let names = Names::new(["alpha", "beta", "gamma"]);
-    /// let collected: Vec<&str> = names.iter().collect();
-    /// assert_eq!(collected, vec!["alpha", "beta", "gamma"]);
-    /// ```
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.names.iter().map(|s| s.as_str())
-    }
-
-    /// Checks if the collection contains a specific name.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use prockit_framework::Names;
-    /// let names = Names::new(["read", "write", "execute"]);
-    /// assert!(names.contains("read"));
-    /// assert!(!names.contains("delete"));
-    /// ```
-    pub fn contains(&self, name: &str) -> bool {
-        self.names.iter().any(|n| n == name)
+    pub fn new(names: impl Into<Names>) -> Self {
+        names.into()
     }
 }
 
 impl From<&str> for Names {
     fn from(name: &str) -> Self {
-        Self::new([name])
+        Self {
+            names: vec![name.to_string()],
+        }
     }
 }
 
 impl From<String> for Names {
     fn from(name: String) -> Self {
-        Self::new([name])
+        Self { names: vec![name] }
     }
 }
 
 impl<const N: usize> From<[&str; N]> for Names {
     fn from(names: [&str; N]) -> Self {
-        Self::new(names)
+        Self {
+            names: names.into_iter().map(|name| name.to_string()).collect(),
+        }
     }
 }
 
 impl<const N: usize> From<[String; N]> for Names {
     fn from(names: [String; N]) -> Self {
-        Self::new(names)
+        Self {
+            names: names.into_iter().collect(),
+        }
     }
 }
 
@@ -175,7 +146,7 @@ impl NameQuery {
     /// assert!(query.matches(&names));
     /// ```
     pub fn matches(&self, names: &Names) -> bool {
-        names.iter().any(|name| self.regex.is_match(name))
+        names.names.iter().any(|name| self.regex.is_match(name))
     }
 }
 
@@ -201,20 +172,24 @@ impl From<Regex> for NameQuery {
 mod tests {
     use super::*;
 
+    fn contains(names: &Names, name: &str) -> bool {
+        names.names.contains(&String::from(name))
+    }
+
     #[test]
     fn test_single_name() {
         let names = Names::from("foo");
-        assert!(names.contains("foo"));
-        assert!(!names.contains("bar"));
+        assert!(contains(&names, "foo"));
+        assert!(!contains(&names, "bar"));
     }
 
     #[test]
     fn test_multiple_names() {
         let names = Names::new(["add", "sum", "plus"]);
-        assert!(names.contains("add"));
-        assert!(names.contains("sum"));
-        assert!(names.contains("plus"));
-        assert!(!names.contains("subtract"));
+        assert!(contains(&names, "add"));
+        assert!(contains(&names, "sum"));
+        assert!(contains(&names, "plus"));
+        assert!(!contains(&names, "subtract"));
     }
 
     #[test]
