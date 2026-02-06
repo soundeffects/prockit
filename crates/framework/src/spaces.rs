@@ -9,6 +9,8 @@ use bevy::prelude::*;
 /// * `Position` - The coordinate type used for spatial sampling (e.g., `Vec3`)
 /// * `GlobalTransform` - Component type for world-space transforms
 /// * `LocalTransform` - Component type for parent-relative transforms
+/// * `LocalRegion` - Describes a local region in the space (e.g., AABB for 3D)
+/// * `PlacementType` - Identifies placement strategies for this space
 ///
 /// # Example
 /// ```
@@ -49,6 +51,17 @@ pub trait Space: Clone + Send + Sync + 'static {
     /// Must be a Bevy component that can be cloned and has a sensible default.
     type LocalTransform: Component + Clone + Default;
 
+    /// Describes a local region in this space (e.g., AABB for 3D space).
+    /// Used by placements to specify the area a child node governs.
+    type LocalRegion: Clone + Default + Send + Sync + 'static;
+
+    /// Identifies placement strategies for this space.
+    /// Each space defines its own set of valid placement types.
+    type PlacementType: Clone + Copy + Eq + std::hash::Hash + Send + Sync + 'static;
+
+    /// Returns all valid placement types for this space.
+    fn placement_types() -> &'static [Self::PlacementType];
+
     /// Computes the "noticeability" of a node from a viewer's perspective. This usually uses
     /// a combination of distance from viewers, scale of procedural node, and priority of
     /// viewers to create a noticeability score.
@@ -65,6 +78,29 @@ pub trait Space: Clone + Send + Sync + 'static {
         parent: &Self::GlobalTransform,
         child: &Self::LocalTransform,
     ) -> Self::GlobalTransform;
+}
+
+/// Placement types for [`RealSpace`], representing different strategies for placing
+/// child nodes in 3D space.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RealSpacePlacement {
+    /// Octree-style volume division - subdivides a volume into smaller volumes
+    VolumeSubdivide,
+    /// Logical subdivision at node level
+    NodeSubdivide,
+    /// Random points scattered within a volume
+    VolumeScatter,
+    /// Random points scattered on surfaces
+    SurfaceScatter,
+}
+
+/// Axis-aligned bounding box defining a local region in [`RealSpace`].
+#[derive(Clone, Debug, Default)]
+pub struct RealSpaceRegion {
+    /// Minimum corner of the bounding box
+    pub min: Vec3,
+    /// Maximum corner of the bounding box
+    pub max: Vec3,
 }
 
 /// A [`Space`] implementation for standard 3D game world space using Bevy's transform types.
@@ -87,6 +123,17 @@ impl Space for RealSpace {
     type Position = Vec3;
     type GlobalTransform = GlobalTransform;
     type LocalTransform = Transform;
+    type LocalRegion = RealSpaceRegion;
+    type PlacementType = RealSpacePlacement;
+
+    fn placement_types() -> &'static [Self::PlacementType] {
+        &[
+            RealSpacePlacement::VolumeSubdivide,
+            RealSpacePlacement::NodeSubdivide,
+            RealSpacePlacement::VolumeScatter,
+            RealSpacePlacement::SurfaceScatter,
+        ]
+    }
 
     fn noticeability(node: &GlobalTransform, viewer: &GlobalTransform) -> f32 {
         node.scale().max_element() / viewer.translation().distance_squared(node.translation())

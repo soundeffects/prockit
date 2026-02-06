@@ -2,13 +2,12 @@
 //!
 //! This module provides:
 //!
-//! - [`ProceduralNode`] trait: The interface all procedural node types must implement
 //! - [`FrameworkPlugin`]: The main Bevy plugin that sets up the procedural generation systems
 //! - Memory size constants ([`KB`], [`MB`], [`GB`]) for convenient configuration
 
-use crate::ProceduralNode;
+use crate::{generate::GenerateTask, provides::PodProvides, registry::NodeRegistry, Pod};
 
-use super::{GenerateTask, Space, Viewer};
+use super::{ProceduralNode, Space, Viewer};
 use bevy::prelude::*;
 
 /// One kilobyte (1024 bytes) for memory configuration.
@@ -28,6 +27,7 @@ pub const GB: usize = 1024 * MB;
 /// - Memory-aware LOD threshold management
 /// - Async generation task scheduling and polling
 /// - Component hooks for memory tracking
+/// - Node registry for placement-based generation
 ///
 /// # Configuration
 ///
@@ -39,17 +39,17 @@ pub const GB: usize = 1024 * MB;
 /// # Example
 ///
 /// ```
-/// use prockit_framework::{FrameworkPlugin, RealSpace, ProceduralNode, Subdivisions, Provider, Provides, MB};
+/// use prockit_framework::{FrameworkPlugin, RealSpace, ProceduralNode, Subdivide, Provider, Provides, MB};
 /// use bevy::prelude::*;
+/// use get_size2::GetSize;
 ///
-/// #[derive(Component, Clone)]
+/// #[derive(Component, Clone, Default, GetSize)]
 /// struct TerrainChunk;
 ///
-/// impl ProceduralNode<RealSpace> for TerrainChunk {
-///     fn provides(&self, _instance: &mut Provides<RealSpace>) {}
-///     fn subdivide(&self) -> Option<Subdivisions<RealSpace>> { None }
-///     fn init() -> Self { TerrainChunk }
-///     fn generate(&mut self, _transform: &GlobalTransform, _provider: &Provider<RealSpace>) {}
+/// impl ProceduralNode for TerrainChunk {
+///     fn provides(&self, _provides: &mut Provides<Self>) {}
+///     fn subdivide(&self) -> Option<Subdivide> { None }
+///     fn place(_provider: &Provider) -> Option<Self> { Some(Self) }
 /// }
 ///
 /// fn main() {
@@ -81,6 +81,7 @@ impl FrameworkPlugin {
     ///
     /// This method sets up:
     /// - The [`Thresholds`](super::Thresholds) resource for memory-aware LOD
+    /// - The [`NodeRegistry`](crate::registry::NodeRegistry) resource for node registration
     /// - Required components for [`Viewer`] entities
     /// - Core systems for generation, polling, resampling, and threshold calibration
     ///
@@ -101,14 +102,15 @@ impl FrameworkPlugin {
     pub fn with_space<S: Space>(mut self, memory_limit: usize, free_percentage: f32) -> Self {
         self.registrations.push(Box::new(move |app| {
             app.insert_resource(Thresholds::<S>::new(memory_limit, free_percentage))
+                .insert_resource(NodeRegistry::new())
                 .register_required_components::<Viewer<S>, S::GlobalTransform>()
                 .add_systems(
                     Update,
                     (
                         Thresholds::<S>::resample,
                         Thresholds::<S>::recalibrate,
-                        GenerateTask::<S>::poll_tasks,
                         GenerateTask::<S>::create_tasks,
+                        GenerateTask::<S>::poll_tasks,
                     ),
                 );
         }));
@@ -118,54 +120,67 @@ impl FrameworkPlugin {
     /// Registers a procedural node type with the framework.
     ///
     /// This method sets up:
-    /// - Trait query registration for the node type
-    /// - Required `GlobalTransform` component
+    /// - Node registration with the [`NodeRegistry`](crate::registry::NodeRegistry)
+    /// - Required `GlobalTransform` component for the space
+    /// - Required [`PodProvides`] component for sampler collection
     /// - Component hooks for memory tracking (add/remove callbacks)
     ///
     /// # Type Parameters
     ///
-    /// * `S` - The [`Space`] this node type operates in
-    /// * `T` - The procedural node type, must implement [`ProceduralNode<S>`] and [`Component`]
+    /// * `S` - The [`Space`] this node's transforms operate in
+    /// * `T` - The procedural node type, must implement [`ProceduralNode`] and [`Component`]
     ///
     /// # Example
     ///
     /// ```
-    /// use prockit_framework::{FrameworkPlugin, RealSpace, ProceduralNode, Subdivisions, Provider, Provides, MB};
+    /// use prockit_framework::{FrameworkPlugin, RealSpace, ProceduralNode, Subdivide, Provider, Provides, MB};
     /// use bevy::prelude::*;
+    /// use get_size2::GetSize;
     ///
-    /// #[derive(Component, Clone)]
+    /// #[derive(Component, Clone, Default, GetSize)]
     /// struct MyNode;
     ///
-    /// # impl ProceduralNode<RealSpace> for MyNode {
-    /// #     fn provides(&self, _: &mut Provides<RealSpace>) {}
-    /// #     fn subdivide(&self) -> Option<Subdivisions<RealSpace>> { None }
-    /// #     fn init() -> Self { MyNode }
-    /// #     fn generate(&mut self, _: &GlobalTransform, _: &Provider<RealSpace>) {}
-    /// # }
+    /// impl ProceduralNode for MyNode {
+    ///     fn provides(&self, _provides: &mut Provides<Self>) {}
+    ///     fn subdivide(&self) -> Option<Subdivide> { None }
+    ///     fn place(_provider: &Provider) -> Option<Self> { Some(Self) }
+    /// }
     ///
     /// let plugin = FrameworkPlugin::new()
     ///     .with_space::<RealSpace>(64 * MB, 0.5)
     ///     .with_node::<RealSpace, MyNode>();
     /// ```
-    pub fn with_node<S: Space, T: ProceduralNode<S> + Component>(mut self) -> Self {
+    pub fn with_node<S: Space, T: ProceduralNode>(mut self) -> Self {
         self.registrations.push(Box::new(|app| {
-            app.register_component_as::<dyn ProceduralNode<S>, T>()
-                .register_required_components::<T, S::GlobalTransform>()
+            app.world_mut()
+                .resource_mut::<NodeRegistry>()
+                .register::<T>();
+            app.register_required_components::<Pod<T>, S::GlobalTransform>()
                 .add_systems(Startup, Self::register_hooks::<S, T>);
         }));
         self
     }
 
-    /// Startup system that registers component hooks for memory tracking.
+    /// Startup system that registers component hooks for memory tracking and PodProvides creation.
     ///
     /// This system is run during [`Startup`] for each registered node type. It sets up
-    /// `on_add` and `on_remove` hooks that update the [`Thresholds`](super::Thresholds)
-    /// resource when nodes are spawned or despawned.
-    fn register_hooks<S: Space, T: ProceduralNode<S> + Component>(world: &mut World) {
+    /// `on_add` and `on_remove` hooks that:
+    /// - Create a [`PodProvides`] component when a [`Pod<T>`] is added
+    /// - Update the [`Thresholds`](super::Thresholds) resource when nodes are spawned or despawned
+    fn register_hooks<S: Space, T: ProceduralNode>(world: &mut World) {
         world
-            .register_component_hooks::<T>()
-            .on_add(|mut world, _| world.resource_mut::<Thresholds<S>>().add(size_of::<T>()))
-            .on_remove(|mut world, _| world.resource_mut::<Thresholds<S>>().sub(size_of::<T>()));
+            .register_component_hooks::<Pod<T>>()
+            .on_add(|mut world, entity, _| {
+                let pod = world.entity(entity).get::<Pod<T>>().unwrap().clone();
+                let size = pod.node_size();
+                let pod_provides = PodProvides::new(pod);
+                world.commands().entity(entity).insert(pod_provides);
+                world.resource_mut::<Thresholds<S>>().add(size);
+            })
+            .on_remove(|mut world, entity, _| {
+                let size = world.entity(entity).get::<Pod<T>>().unwrap().node_size();
+                world.resource_mut::<Thresholds<S>>().sub(size);
+            });
     }
 }
 
@@ -181,43 +196,49 @@ impl Plugin for FrameworkPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Provider, Provides, RealSpace, Subdivisions};
+    use crate::{Provider, Provides, RealSpace, Subdivide};
+    use get_size2::GetSize;
 
-    #[derive(Component, Clone)]
+    #[derive(Component, Clone, Default, GetSize)]
     struct TestNode {
         value: i32,
     }
 
-    impl ProceduralNode<RealSpace> for TestNode {
-        fn provides(&self, _instance: &mut Provides<RealSpace>) {}
-        fn subdivide(&self) -> Option<Subdivisions<RealSpace>> {
+    impl ProceduralNode for TestNode {
+        fn provides(&self, _provides: &mut Provides<Self>) {}
+
+        fn subdivide(&self) -> Option<Subdivide> {
             None
         }
-        fn init() -> Self {
-            TestNode { value: 0 }
-        }
-        fn generate(&mut self, _transform: &GlobalTransform, _provider: &Provider<RealSpace>) {
-            self.value = 42;
+
+        fn place(_provider: &Provider) -> Option<Self> {
+            Some(Self { value: 42 })
         }
     }
 
-    #[derive(Component, Clone)]
+    #[derive(Component, Clone, Default, GetSize)]
     struct ProviderNode {
         multiplier: f32,
     }
 
-    impl ProceduralNode<RealSpace> for ProviderNode {
-        fn provides(&self, instance: &mut Provides<RealSpace>) {
-            let mult = self.multiplier;
-            instance.add("scale", move |pos: &Vec3| *pos * mult);
+    impl ProviderNode {
+        fn scale(&self, pos: &Vec3) -> Vec3 {
+            *pos * self.multiplier
         }
-        fn subdivide(&self) -> Option<Subdivisions<RealSpace>> {
+    }
+
+    impl ProceduralNode for ProviderNode {
+        fn provides(&self, provides: &mut Provides<Self>) {
+            provides.add::<RealSpace, _>("scale", ProviderNode::scale);
+        }
+
+        fn subdivide(&self) -> Option<Subdivide> {
             None
         }
-        fn init() -> Self {
-            ProviderNode { multiplier: 1.0 }
+
+        fn place(_provider: &Provider) -> Option<Self> {
+            Some(Self { multiplier: 1.0 })
         }
-        fn generate(&mut self, _transform: &GlobalTransform, _provider: &Provider<RealSpace>) {}
     }
 
     #[test]
@@ -255,8 +276,10 @@ mod tests {
 
     #[test]
     fn test_framework_plugin_with_node_adds_registration() {
-        let plugin = FrameworkPlugin::new().with_node::<RealSpace, TestNode>();
-        assert_eq!(plugin.registrations.len(), 1);
+        let plugin = FrameworkPlugin::new()
+            .with_space::<RealSpace>(64 * MB, 0.5)
+            .with_node::<RealSpace, TestNode>();
+        assert_eq!(plugin.registrations.len(), 2);
     }
 
     #[test]
@@ -269,18 +292,11 @@ mod tests {
     }
 
     #[test]
-    fn test_procedural_node_init() {
-        let node = TestNode::init();
-        assert_eq!(node.value, 0);
-    }
-
-    #[test]
-    fn test_procedural_node_generate() {
-        let mut node = TestNode::init();
-        let transform = GlobalTransform::IDENTITY;
-        let provider = Provider::<RealSpace>::empty();
-        node.generate(&transform, &provider);
-        assert_eq!(node.value, 42);
+    fn test_procedural_node_place() {
+        let provider = Provider::root();
+        let node = TestNode::place(&provider);
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().value, 42);
     }
 
     #[test]
@@ -290,28 +306,14 @@ mod tests {
     }
 
     #[test]
-    fn test_procedural_node_provides() {
-        let node = ProviderNode { multiplier: 2.0 };
-        let mut provides = Provides::<RealSpace>::new();
-        node.provides(&mut provides);
-
-        use crate::NameQuery;
-        let scale_fn = provides.query::<Vec3>(&NameQuery::exact("scale"));
-        assert!(scale_fn.is_some());
-
-        let scale = scale_fn.unwrap();
-        assert_eq!(scale(&Vec3::splat(1.0)), Vec3::splat(2.0));
-    }
-
-    #[test]
-    fn test_procedural_node_component_in_world() {
+    fn test_pod_in_world() {
         let mut world = World::new();
-        let entity = world
-            .spawn((TestNode { value: 100 }, GlobalTransform::IDENTITY))
-            .id();
+        let provider = Provider::root();
+        let pod = Pod::<TestNode>::place(&provider).unwrap();
+        let entity = world.spawn((pod, GlobalTransform::IDENTITY)).id();
 
-        let node = world.entity(entity).get::<TestNode>().unwrap();
-        assert_eq!(node.value, 100);
+        let pod = world.entity(entity).get::<Pod<TestNode>>().unwrap();
+        assert_eq!(pod.read().value, 42);
     }
 
     #[test]
@@ -321,6 +323,15 @@ mod tests {
 
         // The resource should be inserted after plugin build
         assert!(app.world().contains_resource::<Thresholds<RealSpace>>());
+    }
+
+    #[test]
+    fn test_framework_plugin_build_inserts_node_registry() {
+        let mut app = App::new();
+        app.add_plugins(FrameworkPlugin::new().with_space::<RealSpace>(64 * MB, 0.5));
+
+        // The NodeRegistry should be inserted after plugin build
+        assert!(app.world().contains_resource::<NodeRegistry>());
     }
 
     #[test]

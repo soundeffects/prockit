@@ -1,4 +1,5 @@
 use super::{NameQuery, Names, Pod, ProceduralNode, Space};
+use crate::placement::{Placement, SpacePlacement};
 use bevy::{
     prelude::*,
     utils::{TypeIdMap, TypeIdMapExt},
@@ -11,23 +12,81 @@ use std::{
 /// A collection of spatial sampling functions that can be looked up by function name and type,
 /// created from ancestor [`ProceduralNode`]s by the [`prockit_framework`] crate automatically.
 /// An instantiated `Provider` is given to the child [`ProceduralNode`] during the call to
-/// [`ProceduralNode::generate`].
+/// [`ProceduralNode::place`].
+///
+/// The `Provider` also stores the [`Placement`] that created it, allowing nodes to access
+/// placement information for any space they operate in.
 ///
 /// # Examples
 /// ```
 /// # use prockit_framework::{Provider, RealSpace};
 /// # use bevy::prelude::*;
-/// fn generate_count(provider: &Provider) -> i32 {
+/// fn accept_placement(provider: &Provider) -> bool {
+///     // Check placement data for RealSpace
+///     if let Some(space_placement) = provider.space_placement::<RealSpace>() {
+///         space_placement.detail_scale > 0.1
+///     } else {
+///         false
+///     }
+/// }
+///
+/// fn query_ancestor(provider: &Provider) -> i32 {
 ///     let count = provider.query::<RealSpace, i32>("count").unwrap();
-///     count(&Vec3::ZERO) + 1;
+///     count(&Vec3::ZERO) + 1
 /// }
 /// ```
 pub struct Provider {
     entries: Vec<(Names, SpaceType, ReturnType, ErasedClosure)>,
     transforms: TypeIdMap<ErasedTransform>,
+    placement: Placement,
 }
 
 impl Provider {
+    /// Create a provider for a placement, inheriting samplers from a parent provider.
+    ///
+    /// This is the primary way to create a `Provider` for child nodes during the
+    /// generation process.
+    pub fn for_placement(placement: Placement, parent: &Provider) -> Self {
+        Self {
+            entries: parent.entries.clone(),
+            transforms: parent.transforms.clone(),
+            placement,
+        }
+    }
+
+    /// Create an empty root provider with no placement data.
+    ///
+    /// Used for root nodes that have no parent placement.
+    pub fn root() -> Self {
+        Self {
+            entries: vec![],
+            transforms: TypeIdMap::default(),
+            placement: Placement::new(),
+        }
+    }
+
+    /// Access the placement that created this provider.
+    pub fn placement(&self) -> &Placement {
+        &self.placement
+    }
+
+    /// Convenience method to get space-specific placement data.
+    ///
+    /// # Example
+    /// ```
+    /// # use prockit_framework::{Provider, RealSpace};
+    /// fn check_detail(provider: &Provider) -> bool {
+    ///     if let Some(space_placement) = provider.space_placement::<RealSpace>() {
+    ///         space_placement.detail_scale > 0.1
+    ///     } else {
+    ///         false
+    ///     }
+    /// }
+    /// ```
+    pub fn space_placement<S: Space>(&self) -> Option<&SpacePlacement<S>> {
+        self.placement.get::<S>()
+    }
+
     /// Add a named sampler, expecting the data the sampler is accessing to be curried in the
     /// first argument using an environment-capturing closure.
     fn add<S: Space, R: 'static>(
@@ -48,7 +107,7 @@ impl Provider {
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provides, NameQuery, RealSpace};
+    /// # use prockit_framework::{Provides, NameQuery, RealSpace, Provider};
     /// # use bevy::prelude::*;
     /// fn generate(provider: &Provider) {
     ///     let result = provider.query::<RealSpace, f32>(NameQuery::exact("opacity"));
@@ -79,13 +138,14 @@ impl Provider {
     /// the `entity` argument into a new `Provider`.
     pub(crate) fn collect(
         entity: Entity,
+        placement: Placement,
         pod_provides: Query<&PodProvides>,
         hierarchy: Query<&ChildOf>,
-        provide_map: &ProvideMap,
     ) -> Self {
         let mut provider = Provider {
             entries: vec![],
             transforms: TypeIdMap::default(),
+            placement,
         };
 
         // TODO: collect transforms
@@ -93,7 +153,7 @@ impl Provider {
             .iter_ancestors(entity)
             .filter_map(|entity| pod_provides.get(entity).ok())
         {
-            provide_map.curry(pod_provides, &mut provider);
+            pod_provides.curry(&mut provider);
         }
 
         provider
@@ -102,14 +162,17 @@ impl Provider {
 
 /// An interface by which a [`ProceduralNode`] exports the spatial sampling functions that can
 /// be called on it. These functions are later collected into a [`Provider`], which is given to
-/// any child [`ProceduralNode`] to the node that offers this instance of `Provides` during the
-/// call to [`ProceduralNode::generate`].
+/// any child [`ProceduralNode`] during the call to [`ProceduralNode::place`].
+///
+/// `Provides<T>` is space-agnostic: a node can add samplers for multiple spaces by calling
+/// [`Provides::add`] with different space type parameters.
 ///
 /// # Examples
 /// ```
-/// # use prockit_framework::{Provides, ProceduralNode, Subdivide, Provider};
+/// # use prockit_framework::{Provides, ProceduralNode, Provider, Subdivide, Placement, RealSpace};
+/// # use bevy::prelude::*;
 /// # use get_size2::GetSize;
-/// # #[derive(Default, GetSize)]
+/// # #[derive(Component, Clone, Default, GetSize)]
 /// struct MyNode { value: f32 };
 ///
 /// impl MyNode {
@@ -119,13 +182,13 @@ impl Provider {
 /// }
 ///
 /// impl ProceduralNode for MyNode {
-///     fn provides() -> Provides<Self> {
-///         Provides::<Self>::new()
-///             .with<RealSpace, _>("get value", TestNode::get_value)
+///     fn provides(&self, provides: &mut Provides<Self>) {
+///         // Add a sampler for RealSpace
+///         provides.add::<RealSpace, _>("get value", MyNode::get_value);
 ///     }
-///     // ...
-/// # fn subdivide(&self) -> Option<Subdivide> { None }
-/// # fn generate(&mut self, provider: &Provider) {}
+///
+///     fn subdivide(&self) -> Option<Subdivide> { None }
+///     fn place(_: &Provider) -> Option<Self> { Some(Self::default()) }
 /// }
 /// ```
 pub struct Provides<T: ProceduralNode> {
@@ -138,16 +201,13 @@ impl<T: ProceduralNode> Provides<T> {
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::Provides;
+    /// # use prockit_framework::{Provides, ProceduralNode, Provider, Subdivide};
+    /// # use bevy::prelude::*;
     /// # use get_size2::GetSize;
-    /// # #[derive(Default, GetSize)]
+    /// # #[derive(Component, Clone, Default, GetSize)]
     /// struct MyNode;
     /// // impl ProceduralNode for MyNode...
-    /// # impl ProceduralNode for MyNode {
-    /// # fn provides() -> Provides<Self> { Provides::<Self>::new() }
-    /// # fn subdivide(&self) -> Option<Subdivide> { None }
-    /// # fn generate(&mut self, provider: &Provider) {}
-    /// # }
+    ///
     /// let provides = Provides::<MyNode>::new();
     /// ```
     pub fn new() -> Self {
@@ -157,17 +217,22 @@ impl<T: ProceduralNode> Provides<T> {
         }
     }
 
-    /// Add a spatial sampling function to this instance of `Provides`. As its first argument,
-    /// the sampler must operate on a reference to the [`ProceduralNode`] type which is
-    /// providing this function (usually an `&self`). As its second argument, the sampler must
-    /// take a reference to a position in the space it operates on. The function may have any
-    /// return type.
+    /// Add a spatial sampling function to this instance of `Provides`.
+    ///
+    /// As its first argument, the sampler must operate on a reference to the [`ProceduralNode`]
+    /// type which is providing this function (usually an `&self`). As its second argument, the
+    /// sampler must take a reference to a position in the space it operates on. The function
+    /// may have any return type.
+    ///
+    /// A node can add samplers for multiple spaces by calling this method with different
+    /// space type parameters.
     ///
     /// # Examples
     /// ```
-    /// # use prockit_framework::{Provides, ProceduralNode, Subdivide, Provider};
+    /// # use prockit_framework::{Provides, ProceduralNode, Provider, Subdivide, RealSpace};
+    /// # use bevy::prelude::*;
     /// # use get_size2::GetSize;
-    /// # #[derive(Default, GetSize)]
+    /// # #[derive(Component, Clone, Default, GetSize)]
     /// struct MyNode { value: f32 };
     ///
     /// impl MyNode {
@@ -177,13 +242,8 @@ impl<T: ProceduralNode> Provides<T> {
     /// }
     ///
     /// // impl ProceduralNode for MyNode..
-    /// # impl ProceduralNode for MyNode {
-    /// # fn provides() -> Provides<Self> { Provides::<Self>::new() }
-    /// # fn subdivide(&self) -> Option<Subdivide> { None }
-    /// # fn generate(&mut self, provider: &Provider) {}
-    /// # }
     ///
-    /// let provides = Provides::<MyNode>::new();
+    /// let mut provides = Provides::<MyNode>::new();
     /// provides.add::<RealSpace, _>("get value", MyNode::get_value);
     /// ```
     pub fn add<S: Space, R: 'static>(
@@ -209,51 +269,64 @@ impl<T: ProceduralNode> Provides<T> {
         self.add::<S, R>(names, sampler);
         self
     }
+
+    /// Convert to type-erased form for storage and currying.
+    pub(crate) fn into_erased(self) -> ErasedProvides {
+        self.provides
+    }
+}
+
+impl<T: ProceduralNode> Default for Provides<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// This struct is a type-erased way to query `Pod<T>` components in Bevy ECS, such that a
 /// `Provider` can collect all `Provides` of all ancestor nodes, regardless of type.
 #[derive(Component)]
 pub(crate) struct PodProvides {
-    node_id: TypeId,
     pod: ErasedPod,
+    provides: ErasedProvides,
+    /// Type-erased function to call subdivide on the pod
+    subdivide_fn: fn(&ErasedPod) -> Option<super::Subdivide>,
 }
 
-/// This holds (type-erased) `Provides` values corresponding to all `ProceduralNode`
-/// types registered to the Bevy app at startup using `ProceduralNode::provides`.
-///
-/// Given a `PodProvides` and a mutable `Provider`, this struct will add all sampling functions
-/// (with the appropriate `Pod<T>` curried in for the sampler to read) to the `Provider`.
-#[derive(Resource)]
-pub(crate) struct ProvideMap {
-    map: TypeIdMap<ErasedProvides>,
-}
-
-impl ProvideMap {
-    /// Register a `Provides` value for the given `ProceduralNode` type. This method should
-    /// only be called at app startup.
-    pub(crate) fn register<T: ProceduralNode>(&mut self) {
-        self.map.insert_type::<T>(T::provides().provides);
+impl PodProvides {
+    /// Create a new PodProvides by calling `provides()` on the node instance.
+    pub(crate) fn new<T: ProceduralNode>(pod: Pod<T>) -> Self {
+        let mut provides = Provides::<T>::new();
+        pod.read().provides(&mut provides);
+        Self {
+            pod: Box::new(pod),
+            provides: provides.into_erased(),
+            subdivide_fn: |erased_pod| {
+                erased_pod
+                    .downcast_ref::<Pod<T>>()
+                    .and_then(|pod| pod.subdivide())
+            },
+        }
     }
 
-    /// With a `PodProvides` and a mutable `Provider`, this will find the `Provides`
-    /// corresponding to the type held in the `PodProvides`, and will delegate the task of
-    /// adding the functions and currying them with the `Pod<T>` to the `Provides` struct.
-    fn curry(&self, pod_provides: &PodProvides, provider: &mut Provider) {
-        if let Some(provides) = self.map.get(&pod_provides.node_id) {
-            provides.curry(&pod_provides.pod, provider);
-        }
+    /// Curry all samplers with the pod data and add to the provider.
+    fn curry(&self, provider: &mut Provider) {
+        self.provides.curry(&self.pod, provider);
+    }
+
+    /// Get the subdivisions from this node (type-erased).
+    pub(crate) fn subdivide(&self) -> Option<super::Subdivide> {
+        (self.subdivide_fn)(&self.pod)
     }
 }
 
 /// After a `Provides` is constructed for a type, it must be stored with all other types'
-/// `Provides` in the `ProvideMap`. Thus, the generic argument of the `Provides` must be
-/// type-erased.
+/// `Provides` in type-erased form. This allows the framework to handle nodes of any type
+/// uniformly.
 ///
 /// Note that `ProceduralNode::provides` enforces the use of `Provides<Self>` (rather than
 /// `ErasedProvides`) because it ensures that all added sampling functions read the
 /// `ProceduralNode` they were registered with.
-struct ErasedProvides {
+pub(crate) struct ErasedProvides {
     entries: Vec<(Names, ErasedSampler, Currier)>,
 }
 
@@ -301,21 +374,21 @@ mod tests {
     use bevy::prelude::*;
     use get_size2::GetSize;
 
-    #[derive(Default, GetSize)]
+    #[derive(Component, Clone, Default, GetSize)]
     struct TestNode {
         value: f32,
     }
 
     impl ProceduralNode for TestNode {
-        fn provides() -> Provides<Self> {
-            Provides::<Self>::new()
-        }
+        fn provides(&self, _provides: &mut Provides<Self>) {}
 
         fn subdivide(&self) -> Option<Subdivide> {
             None
         }
 
-        fn generate(&mut self, _provider: &Provider) {}
+        fn place(_provider: &Provider) -> Option<Self> {
+            Some(Self::default())
+        }
     }
 
     #[test]

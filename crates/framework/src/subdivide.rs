@@ -1,146 +1,184 @@
-use super::{Pod, ProceduralNode, Provider, Space};
-use bevy::{
-    prelude::*,
-    tasks::{AsyncComputeTaskPool, Task, block_on},
-};
+use crate::placement::Placement;
+use bevy::prelude::*;
 
-pub struct Subdivision {
-    insertions: Vec<Box<dyn FnOnce(EntityCommands) + Send + Sync>>,
-    generation:
-        Box<dyn FnOnce(&Provider) -> Box<dyn FnOnce(EntityCommands) + Send + Sync> + Send + Sync>,
-}
-
-impl Subdivision {
-    pub(crate) fn new<T: ProceduralNode>() -> Self {
-        Subdivision {
-            generation: Box::new(|provider| {
-                let pod = Pod::<T>::generate(provider);
-                let mut new_provider = provider.clone();
-                T::provides(new_provider.provides(&pod));
-                let closure = move |mut commands: EntityCommands| {
-                    commands.insert((pod, new_provider));
-                };
-                Box::new(closure)
-            }),
-            insertions: Vec::new(),
-        }
-    }
-
-    pub fn transform<S: Space>(&mut self, transform: S::LocalTransform) -> &mut Self {
-        let closure = move |mut commands: EntityCommands| {
-            commands.insert(transform);
-        };
-        self.insertions.push(Box::new(closure));
-        self
-    }
-
-    fn generate(mut self, provider: &Provider) -> EntityInsertions {
-        let node_insertion = (self.generation)(provider);
-        self.insertions.push(node_insertion);
-        EntityInsertions {
-            insertions: self.insertions,
-        }
-    }
-}
-
-struct EntityInsertions {
-    insertions: Vec<Box<dyn FnOnce(EntityCommands) + Send + Sync>>,
-}
-
-impl EntityInsertions {
-    fn insert(self, mut commands: EntityCommands) {
-        for insertion in self.insertions {
-            insertion(commands.reborrow());
-        }
-    }
-}
-
+/// A collection of child placements offered by a parent node.
+///
+/// `Subdivide` is **space-agnostic**: each [`Placement`] can contain data for multiple spaces,
+/// allowing nodes that exist in multiple spaces to offer placements with all relevant data.
+///
+/// # Example
+/// ```
+/// use prockit_framework::{Subdivide, Placement, SpacePlacement, RealSpace, RealSpacePlacement, RealSpaceRegion};
+/// use bevy::prelude::*;
+///
+/// let subdivide = Subdivide::new()
+///     .with(Placement::new()
+///         .with_space::<RealSpace>(SpacePlacement {
+///             placement_type: RealSpacePlacement::NodeSubdivide,
+///             region: RealSpaceRegion::default(),
+///             transform: Transform::from_translation(Vec3::X),
+///             detail_scale: 0.5,
+///         }))
+///     .with(Placement::new()
+///         .with_space::<RealSpace>(SpacePlacement {
+///             placement_type: RealSpacePlacement::NodeSubdivide,
+///             region: RealSpaceRegion::default(),
+///             transform: Transform::from_translation(Vec3::NEG_X),
+///             detail_scale: 0.5,
+///         }));
+/// ```
 pub struct Subdivide {
-    subdivisions: Vec<Subdivision>,
+    placements: Vec<Placement>,
 }
 
 impl Subdivide {
-    pub fn add<'a, T: ProceduralNode>(&'a mut self) -> &'a mut Subdivision {
-        self.subdivisions.push(Subdivision::new::<T>());
-        self.subdivisions.last_mut().unwrap()
-    }
-
-    fn generate(self, provider: Provider) -> MultiEntityInsertions {
-        MultiEntityInsertions {
-            entities: self
-                .subdivisions
-                .into_iter()
-                .map(|subdivision| subdivision.generate(&provider))
-                .collect(),
+    /// Create an empty `Subdivide` with no placements.
+    pub fn new() -> Self {
+        Self {
+            placements: Vec::new(),
         }
     }
+
+    /// Add a placement to this `Subdivide`. Returns `&mut Self` for chaining.
+    ///
+    /// # Example
+    /// ```
+    /// # use prockit_framework::{Subdivide, Placement, SpacePlacement, RealSpace, RealSpacePlacement, RealSpaceRegion};
+    /// # use bevy::prelude::*;
+    /// let mut subdivide = Subdivide::new();
+    /// subdivide.add(Placement::new()
+    ///     .with_space::<RealSpace>(SpacePlacement {
+    ///         placement_type: RealSpacePlacement::VolumeSubdivide,
+    ///         region: RealSpaceRegion { min: Vec3::ZERO, max: Vec3::ONE },
+    ///         transform: Transform::IDENTITY,
+    ///         detail_scale: 0.5,
+    ///     }));
+    /// ```
+    pub fn add(&mut self, placement: Placement) -> &mut Self {
+        self.placements.push(placement);
+        self
+    }
+
+    /// Add a placement to this `Subdivide`. Returns `Self` for builder pattern.
+    ///
+    /// # Example
+    /// ```
+    /// # use prockit_framework::{Subdivide, Placement, SpacePlacement, RealSpace, RealSpacePlacement, RealSpaceRegion};
+    /// # use bevy::prelude::*;
+    /// let subdivide = Subdivide::new()
+    ///     .with(Placement::new()
+    ///         .with_space::<RealSpace>(SpacePlacement {
+    ///             placement_type: RealSpacePlacement::VolumeSubdivide,
+    ///             region: RealSpaceRegion { min: Vec3::ZERO, max: Vec3::ONE },
+    ///             transform: Transform::IDENTITY,
+    ///             detail_scale: 0.5,
+    ///         }));
+    /// ```
+    pub fn with(mut self, placement: Placement) -> Self {
+        self.placements.push(placement);
+        self
+    }
+
+    /// Get the placements in this `Subdivide`.
+    pub fn placements(&self) -> &[Placement] {
+        &self.placements
+    }
+
+    /// Consume this `Subdivide` and return the placements.
+    pub fn into_placements(self) -> Vec<Placement> {
+        self.placements
+    }
+
+    /// Returns `true` if this `Subdivide` has no placements.
+    pub fn is_empty(&self) -> bool {
+        self.placements.is_empty()
+    }
+
+    /// Returns the number of placements.
+    pub fn len(&self) -> usize {
+        self.placements.len()
+    }
 }
 
-struct MultiEntityInsertions {
-    entities: Vec<EntityInsertions>,
-}
-
-impl MultiEntityInsertions {
-    fn insert(self, mut commands: EntityCommands) {
-        commands.with_children(|parent| {
-            for entity_insertions in self.entities {
-                entity_insertions.insert(parent.spawn_empty());
-            }
-        });
+impl Default for Subdivide {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 /// Marker component indicating that an entity should be subdivided and its subdivisions
-/// generated by the [`FrameworkPlugin`], which will assign an asynchronous generation task
+/// generated by the framework, which will assign an asynchronous generation task
 /// at the next opportunity.
 #[derive(Component)]
 pub struct PendingGenerate;
 
-/// Marker component for leaf nodes that cannot subdivide further. Applied to nodes whose
-/// [`ProceduralNode::subdivide`] returns `None`, indicating they are at maximum detail level.
-#[derive(Component)]
-pub(crate) struct EmptyNode;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RealSpace, RealSpacePlacement, RealSpaceRegion, SpacePlacement};
 
-/// This component is attached to entities while their children are being generated
-/// in the background using Bevy's async compute task pool. Once the task completes,
-/// the generated children are spawned and this component is removed.
-#[derive(Component)]
-pub(crate) struct GenerateTask {
-    task: Task<MultiEntityInsertions>,
-}
-
-impl GenerateTask {
-    /// System that creates async generation tasks for entities with [`PendingGenerate`]. It
-    /// will handle transform and [`Provider`] propogation. For nodes that return `None` from
-    /// `subdivide()`, an [`EmptyNode`] marker is added instead.
-    pub(crate) fn create_tasks<T: ProceduralNode>(
-        mut commands: Commands,
-        pending_tasks: Query<(Entity, &Pod<T>), With<PendingGenerate>>,
-    ) {
-        let task_pool = AsyncComputeTaskPool::get();
-
-        for (entity, pod, provider) in pending_tasks {
-            let mut entity_commands = commands.entity(entity);
-            entity_commands.remove::<PendingGenerate>();
-            if let Some(subdivisions) = pod.subdivide() {
-                let provider = provider.clone();
-                entity_commands.insert(Self {
-                    task: task_pool.spawn(async move { subdivisions.generate(provider) }),
-                });
-            } else {
-                entity_commands.insert(EmptyNode);
-            }
-        }
+    #[test]
+    fn test_subdivide_new_is_empty() {
+        let subdivide = Subdivide::new();
+        assert!(subdivide.is_empty());
+        assert_eq!(subdivide.len(), 0);
     }
 
-    /// System that polls pending generation tasks and spawns completed children.
-    pub(crate) fn poll_tasks(mut commands: Commands, tasks: Query<(Entity, &mut GenerateTask)>) {
-        for (entity, mut task) in tasks {
-            if task.task.is_finished() {
-                let mut parent = commands.entity(entity);
-                parent.remove::<GenerateTask>();
-                block_on(&mut task.task).insert(parent);
-            }
-        }
+    #[test]
+    fn test_subdivide_add() {
+        let mut subdivide = Subdivide::new();
+        subdivide.add(Placement::new().with_space::<RealSpace>(SpacePlacement {
+            placement_type: RealSpacePlacement::NodeSubdivide,
+            region: RealSpaceRegion::default(),
+            transform: Transform::IDENTITY,
+            detail_scale: 1.0,
+        }));
+
+        assert!(!subdivide.is_empty());
+        assert_eq!(subdivide.len(), 1);
+    }
+
+    #[test]
+    fn test_subdivide_with_chaining() {
+        let subdivide = Subdivide::new()
+            .with(Placement::new().with_space::<RealSpace>(SpacePlacement {
+                placement_type: RealSpacePlacement::NodeSubdivide,
+                region: RealSpaceRegion::default(),
+                transform: Transform::from_translation(Vec3::X),
+                detail_scale: 0.5,
+            }))
+            .with(Placement::new().with_space::<RealSpace>(SpacePlacement {
+                placement_type: RealSpacePlacement::NodeSubdivide,
+                region: RealSpaceRegion::default(),
+                transform: Transform::from_translation(Vec3::NEG_X),
+                detail_scale: 0.5,
+            }));
+
+        assert_eq!(subdivide.len(), 2);
+    }
+
+    #[test]
+    fn test_subdivide_placements_access() {
+        let subdivide = Subdivide::new()
+            .with(Placement::new().with_space::<RealSpace>(SpacePlacement {
+                placement_type: RealSpacePlacement::VolumeSubdivide,
+                region: RealSpaceRegion::default(),
+                transform: Transform::IDENTITY,
+                detail_scale: 1.0,
+            }));
+
+        let placements = subdivide.placements();
+        assert_eq!(placements.len(), 1);
+        assert!(placements[0].has_space::<RealSpace>());
+    }
+
+    #[test]
+    fn test_subdivide_into_placements() {
+        let subdivide = Subdivide::new()
+            .with(Placement::new())
+            .with(Placement::new());
+
+        let placements = subdivide.into_placements();
+        assert_eq!(placements.len(), 2);
     }
 }

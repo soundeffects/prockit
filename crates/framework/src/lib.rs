@@ -1,17 +1,21 @@
+mod generate;
 mod names;
+mod placement;
 mod plugins;
 mod pod;
 mod provides;
+mod registry;
 mod resample;
 mod spaces;
 mod subdivide;
 
 pub use names::{NameQuery, Names};
+pub use placement::{Placement, SpacePlacement};
 pub use plugins::{FrameworkPlugin, GB, KB, MB};
 pub use pod::{Pod, ProceduralNode};
-use provides::{PodProvides, ProvideMap};
 pub use provides::{Provider, Provides};
+pub use registry::NodeRegistry;
 pub use resample::Viewer;
-pub use spaces::{RealSpace, Space};
-use subdivide::{EmptyNode, GenerateTask};
-pub use subdivide::{PendingGenerate, Subdivide, Subdivision};
+use resample::Thresholds;
+pub use spaces::{RealSpace, RealSpacePlacement, RealSpaceRegion, Space};
+pub use subdivide::{PendingGenerate, Subdivide};

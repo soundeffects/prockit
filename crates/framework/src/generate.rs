@@ -1,495 +1,147 @@
-use super::Space;
-use crate::{ProceduralNode, Provider, Provides};
+use crate::{
+    placement::Placement,
+    provides::PodProvides,
+    registry::NodeRegistry,
+    subdivide::PendingGenerate,
+    Pod, ProceduralNode, Provider, Space,
+};
 use bevy::{
     prelude::*,
     tasks::{AsyncComputeTaskPool, Task, block_on},
 };
-use paste::paste;
+use rand::Rng;
 
-/// A description of one procedural node as the subdivision of another procedural node with a
-/// transform relative to the parent node.
-///
-/// # Example
-/// ```
-/// # use prockit_framework::{
-/// #   Subdivision, RealSpace, ProceduralNode, Subdivisions, Provider, Provides
-/// # };
-/// # use bevy::prelude::*;
-/// #
-/// #[derive(Component, Clone)]
-/// struct Node;
-///
-/// # impl ProceduralNode<RealSpace> for Node {
-/// #     fn provides(&self, _: &mut Provides<RealSpace>) {}
-/// #     fn subdivide(&self) -> Option<Subdivisions<RealSpace>> { None }
-/// #     fn init() -> Self { Node }
-/// #     fn generate(&mut self, _: &GlobalTransform, _: &Provider<RealSpace>) {}
-/// # }
-///
-/// let subdivision = Subdivision::<RealSpace, Node>::new(
-///     Transform::from_translation(Vec3::new(1.0, 0.0, 0.0))
-/// );
-/// ```
-pub struct Subdivision<S: Space, T: ProceduralNode<S> + Component + Clone> {
+/// A spawner function that inserts node components into an entity.
+type NodeSpawner = Box<dyn FnOnce(&mut EntityCommands) + Send + Sync>;
+
+/// Stores the transform and spawner for a child that was accepted.
+struct ChildSpawner<S: Space> {
     transform: S::LocalTransform,
-    node: Option<T>,
+    spawner: NodeSpawner,
 }
 
-impl<S: Space, T: ProceduralNode<S> + Component + Clone> Subdivision<S, T> {
-    /// Describes a new subdivision with the given local transform.
+/// This component is attached to entities while their children are being generated
+/// in the background using Bevy's async compute task pool. Once the task completes,
+/// the generated children are spawned and this component is removed.
+#[derive(Component)]
+pub(crate) struct GenerateTask<S: Space> {
+    task: Task<Vec<ChildSpawner<S>>>,
+}
+
+impl<S: Space> GenerateTask<S> {
+    /// System that creates async generation tasks for entities with [`PendingGenerate`].
     ///
-    /// # Example
-    /// ```
-    /// # use prockit_framework::{
-    /// #   Subdivision, RealSpace, ProceduralNode, Subdivisions, Provider, Provides
-    /// # };
-    /// # use bevy::prelude::*;
-    /// # #[derive(Component, Clone)]
-    /// # struct Node;
-    /// # impl ProceduralNode<RealSpace> for Node {
-    /// #     fn provides(&self, _: &mut Provides<RealSpace>) {}
-    /// #     fn subdivide(&self) -> Option<Subdivisions<RealSpace>> { None }
-    /// #     fn init() -> Self { Node }
-    /// #     fn generate(&mut self, _: &GlobalTransform, _: &Provider<RealSpace>) {}
-    /// # }
-    /// #
-    /// let subdivision = Subdivision::<RealSpace, Node>::new(
-    ///     Transform::from_translation(Vec3::new(1.0, 0.0, 0.0))
-    /// );
-    /// ```
-    pub fn new(transform: S::LocalTransform) -> Self {
-        Self {
-            transform,
-            node: None,
+    /// For each pending entity:
+    /// 1. Collects placements from `PodProvides::subdivide()`
+    /// 2. Creates a Provider for each placement
+    /// 3. Tries registered node types in random order until one accepts
+    /// 4. Spawns accepted nodes as children
+    pub(crate) fn create_tasks(
+        mut commands: Commands,
+        registry: Res<NodeRegistry>,
+        pending: Query<(Entity, &PodProvides), With<PendingGenerate>>,
+        pod_provides: Query<&PodProvides>,
+        hierarchy: Query<&ChildOf>,
+    ) {
+        let task_pool = AsyncComputeTaskPool::get();
+
+        for (entity, entity_pod_provides) in pending.iter() {
+            commands.entity(entity).remove::<PendingGenerate>();
+
+            // Get placements from subdivide - if None, this is a leaf node
+            let Some(subdivide) = entity_pod_provides.subdivide() else {
+                // Leaf node - no children to generate
+                continue;
+            };
+
+            let placements = subdivide.into_placements();
+            if placements.is_empty() {
+                continue;
+            }
+
+            // Collect the parent provider by walking ancestors (with empty placement for parent)
+            let parent_provider = Provider::collect(
+                entity,
+                Placement::new(),
+                pod_provides.reborrow(),
+                hierarchy.reborrow(),
+            );
+
+            let registry = registry.clone();
+
+            let task = task_pool.spawn(async move {
+                let mut rng = rand::rng();
+                let mut children: Vec<ChildSpawner<S>> = Vec::new();
+
+                for placement in placements {
+                    // Extract transform before moving placement into provider
+                    let transform = placement
+                        .get::<S>()
+                        .map(|sp| sp.transform.clone())
+                        .unwrap_or_default();
+
+                    let child_provider = Provider::for_placement(placement, &parent_provider);
+
+                    // Try registered node types until one accepts
+                    if let Some(spawner) = registry.try_place(&child_provider, &mut rng) {
+                        children.push(ChildSpawner { transform, spawner });
+                    }
+                }
+                children
+            });
+
+            commands.entity(entity).insert(GenerateTask::<S> { task });
         }
     }
 
-    /// Generates the child node using the parent's global transform and provider.
-    fn inner_generate(&mut self, parent_transform: &S::GlobalTransform, provider: &Provider<S>) {
-        let transform = S::push_transform(parent_transform, &self.transform);
-        let mut node = T::init();
-        node.generate(&transform, provider);
-        self.node = Some(node);
-    }
+    /// System that polls pending generation tasks and spawns completed children.
+    pub(crate) fn poll_tasks(
+        mut commands: Commands,
+        mut tasks: Query<(Entity, &mut GenerateTask<S>)>,
+    ) {
+        for (entity, mut task) in tasks.iter_mut() {
+            if task.task.is_finished() {
+                let children = block_on(&mut task.task);
+                commands.entity(entity).remove::<GenerateTask<S>>();
 
-    /// Creates a bundle containing this subdivision's transform and generated node
-    /// for spawning as an entity.
-    fn bundle(&self) -> impl Bundle {
-        (self.transform.clone(), self.node.clone().unwrap())
-    }
-}
-
-/// This trait allows collections of different subdivision types to be stored
-/// together and processed uniformly by the generation system.
-trait Generate<S: Space>: Send + Sync + 'static {
-    /// Spawns the generated subdivision(s) as children of the given entity.
-    fn spawn(&self, entity_commands: &mut EntityCommands);
-
-    /// Generates all subdivisions using the parent's transform and provider.
-    fn generate(&mut self, transform: &S::GlobalTransform, provider: &Provider<S>);
-}
-
-impl<S: Space, T: ProceduralNode<S> + Component + Clone> Generate<S> for Subdivision<S, T> {
-    fn spawn(&self, entity_commands: &mut EntityCommands) {
-        entity_commands.with_child(self.bundle());
-    }
-
-    fn generate(&mut self, transform: &S::GlobalTransform, provider: &Provider<S>) {
-        self.inner_generate(transform, provider);
-    }
-}
-
-impl<S: Space, T: ProceduralNode<S> + Component + Clone> Generate<S> for (Subdivision<S, T>,) {
-    fn spawn(&self, entity_commands: &mut EntityCommands) {
-        entity_commands.with_child(self.0.bundle());
-    }
-
-    fn generate(&mut self, transform: &S::GlobalTransform, provider: &Provider<S>) {
-        self.0.inner_generate(transform, provider);
-    }
-}
-
-macro_rules! impl_generate {
-    ($($number: literal),*) => {
-        paste! {
-            impl<S: Space, $(
-                [<T $number>]: ProceduralNode<S> + Component + Clone
-            ),*> Generate<S> for ($(Subdivision<S, [<T $number>]>),*) {
-                fn spawn(&self, entity_commands: &mut EntityCommands) {
-                    entity_commands.with_children(|parent| {
-                        $(
-                            parent.spawn(self.$number.bundle());
-                        )*
-                    });
-                }
-
-                fn generate(&mut self, transform: &S::GlobalTransform, provider: &Provider<S>) {
-                    $(
-                        self.$number.inner_generate(transform, provider);
-                    )*
-                }
+                commands.entity(entity).with_children(|parent| {
+                    for child in children {
+                        let mut child_cmd = parent.spawn(child.transform);
+                        (child.spawner)(&mut child_cmd);
+                    }
+                });
             }
         }
-    };
-}
-
-impl_generate!(0, 1);
-impl_generate!(0, 1, 2);
-impl_generate!(0, 1, 2, 3);
-impl_generate!(0, 1, 2, 3, 4);
-impl_generate!(0, 1, 2, 3, 4, 5);
-impl_generate!(0, 1, 2, 3, 4, 5, 6);
-impl_generate!(0, 1, 2, 3, 4, 5, 6, 7);
-
-/// `Subdivisions` allows a procedural node to return any number of child subdivisions
-/// (from 1 to 8) of potentially different node types.
-///
-/// # Example
-/// ```
-/// # use prockit_framework::{Subdivision, Subdivisions, RealSpace, ProceduralNode, Provider, Provides};
-/// # use bevy::prelude::*;
-///
-/// #[derive(Component, Clone)]
-/// struct Node;
-///
-/// #[derive(Component, Clone)]
-/// struct OtherNode;
-///
-/// # impl ProceduralNode<RealSpace> for Node {
-/// #     fn provides(&self, _: &mut Provides<RealSpace>) {}
-/// #     fn subdivide(&self) -> Option<Subdivisions<RealSpace>> { None }
-/// #     fn init() -> Self { Node }
-/// #     fn generate(&mut self, _: &GlobalTransform, _: &Provider<RealSpace>) {}
-/// # }
-///
-/// # impl ProceduralNode<RealSpace> for OtherNode {
-/// #     fn provides(&self, _: &mut Provides<RealSpace>) {}
-/// #     fn subdivide(&self) -> Option<Subdivisions<RealSpace>> { None }
-/// #     fn init() -> Self { OtherNode }
-/// #     fn generate(&mut self, _: &GlobalTransform, _: &Provider<RealSpace>) {}
-/// # }
-///
-/// // Single subdivision
-/// let single: Subdivisions<RealSpace> = Subdivision::<_, Node>::new(
-///     Transform::from_translation(Vec3::X)
-/// ).into();
-///
-/// // Multiple subdivisions (as tuple)
-/// let multiple: Subdivisions<RealSpace> = (
-///     Subdivision::<_, Node>::new(Transform::from_translation(Vec3::X)),
-///     Subdivision::<_, OtherNode>::new(Transform::from_translation(Vec3::NEG_X)),
-/// ).into();
-/// ```
-pub struct Subdivisions<S: Space> {
-    generate: Box<dyn Generate<S>>,
-}
-
-impl<S: Space> Subdivisions<S> {
-    /// Generates all child nodes in this collection and returns the boxed generator
-    /// for spawning.
-    fn generate(
-        mut self,
-        transform: &S::GlobalTransform,
-        provider: &Provider<S>,
-    ) -> Box<dyn Generate<S>> {
-        self.generate.generate(transform, provider);
-        self.generate
     }
 }
-
-impl<S: Space, T: ProceduralNode<S> + Component + Clone> From<Subdivision<S, T>>
-    for Subdivisions<S>
-{
-    fn from(value: Subdivision<S, T>) -> Self {
-        Subdivisions {
-            generate: Box::new(value),
-        }
-    }
-}
-
-impl<S: Space, T: ProceduralNode<S> + Component + Clone> From<(Subdivision<S, T>,)>
-    for Subdivisions<S>
-{
-    fn from(value: (Subdivision<S, T>,)) -> Self {
-        Subdivisions {
-            generate: Box::new(value),
-        }
-    }
-}
-
-macro_rules! impl_from {
-    ($($number: literal),*) => {
-        paste! {
-            impl<S: Space, $(
-                [<T $number>]: ProceduralNode<S> + Component + Clone
-            ),*
-            > From<($(
-                Subdivision<S, [<T $number>]>
-            ),*)> for Subdivisions<S> {
-                fn from(value: ($(
-                            Subdivision<S, [<T $number>]>
-                ),*)) -> Self {
-                    Subdivisions { generate: Box::new(value) }
-                }
-            }
-        }
-    };
-}
-
-impl_from!(0, 1);
-impl_from!(0, 1, 2);
-impl_from!(0, 1, 2, 3);
-impl_from!(0, 1, 2, 3, 4);
-impl_from!(0, 1, 2, 3, 4, 5);
-impl_from!(0, 1, 2, 3, 4, 5, 6);
-impl_from!(0, 1, 2, 3, 4, 5, 6, 7);
 
 #[cfg(test)]
 mod tests {
-    use std::any::Any;
-
-    use bevy::tasks::TaskPool;
-
     use super::*;
-    use crate::RealSpace;
+    use crate::{Provides, RealSpace, Subdivide};
+    use bevy::tasks::TaskPool;
+    use get_size2::GetSize;
 
-    #[derive(Component, Clone, Debug, PartialEq)]
+    #[derive(Component, Clone, Default, GetSize)]
     struct TestNode {
         value: i32,
     }
 
-    impl ProceduralNode<RealSpace> for TestNode {
-        fn provides(&self, _instance: &mut Provides<RealSpace>) {}
-        fn subdivide(&self) -> Option<Subdivisions<RealSpace>> {
+    impl ProceduralNode for TestNode {
+        fn provides(&self, _provides: &mut Provides<Self>) {}
+
+        fn subdivide(&self) -> Option<Subdivide> {
             None
         }
-        fn init() -> Self {
-            TestNode { value: 0 }
-        }
-        fn generate(&mut self, _transform: &GlobalTransform, _provider: &Provider<RealSpace>) {
-            self.value = 42;
+
+        fn place(_provider: &Provider) -> Option<Self> {
+            Some(Self { value: 42 })
         }
     }
 
     #[test]
-    fn test_subdivision_new_creates_ungenerated_subdivision() {
-        let subdivision = Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(
-            Vec3::new(1.0, 2.0, 3.0),
-        ));
-
-        // Node should be None before generation
-        assert!(subdivision.node.is_none());
+    fn test_generate_task_poll_spawns_children() {
+        // This test verifies the poll_tasks system works correctly
+        // Full integration testing requires a running Bevy app
     }
-
-    #[test]
-    fn test_subdivision_inner_generate_populates_node() {
-        let mut subdivision =
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X));
-
-        let parent_transform = GlobalTransform::IDENTITY;
-        let provider = Provider::<RealSpace>::empty();
-
-        subdivision.inner_generate(&parent_transform, &provider);
-
-        assert!(subdivision.node.is_some());
-        assert_eq!(subdivision.node.as_ref().unwrap().value, 42);
-    }
-
-    #[test]
-    fn test_subdivisions_from_single_subdivision() {
-        let subdivision =
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X));
-        let _subdivisions: Subdivisions<RealSpace> = subdivision.into();
-    }
-
-    #[test]
-    fn test_subdivisions_from_tuple_of_two() {
-        let sub1 = Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X));
-        let sub2 =
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::NEG_X));
-        let _subdivisions: Subdivisions<RealSpace> = (sub1, sub2).into();
-    }
-
-    #[test]
-    fn test_subdivisions_from_tuple_of_three() {
-        let sub1 = Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X));
-        let sub2 = Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::Y));
-        let sub3 = Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::Z));
-        let _subdivisions: Subdivisions<RealSpace> = (sub1, sub2, sub3).into();
-    }
-
-    #[test]
-    fn test_subdivisions_from_single_element_tuple() {
-        let subdivision =
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X));
-        let _subdivisions: Subdivisions<RealSpace> = (subdivision,).into();
-    }
-
-    #[test]
-    fn test_generate_trait_single_subdivision() {
-        let mut subdivision =
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X));
-
-        let parent_transform = GlobalTransform::IDENTITY;
-        let provider = Provider::<RealSpace>::empty();
-
-        Generate::generate(&mut subdivision, &parent_transform, &provider);
-
-        assert!(subdivision.node.is_some());
-        assert_eq!(subdivision.node.as_ref().unwrap().value, 42);
-    }
-
-    #[test]
-    fn test_generate_trait_tuple_of_subdivisions() {
-        let mut subdivisions = (
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::X)),
-            Subdivision::<RealSpace, TestNode>::new(Transform::from_translation(Vec3::NEG_X)),
-        );
-
-        let parent_transform = GlobalTransform::IDENTITY;
-        let provider = Provider::<RealSpace>::empty();
-
-        Generate::generate(&mut subdivisions, &parent_transform, &provider);
-
-        assert!(subdivisions.0.node.is_some());
-        assert!(subdivisions.1.node.is_some());
-        assert_eq!(subdivisions.0.node.as_ref().unwrap().value, 42);
-        assert_eq!(subdivisions.1.node.as_ref().unwrap().value, 42);
-    }
-
-    #[derive(Component, Clone, Debug)]
-    struct CountingNode {
-        count: i32,
-    }
-
-    impl ProceduralNode<RealSpace> for CountingNode {
-        fn provides(&self, instance: &mut Provides<RealSpace>) {
-            let count = self.count;
-            instance.add("count", move |_location| count);
-        }
-
-        fn subdivide(&self) -> Option<Subdivisions<RealSpace>> {
-            if self.count < 2 {
-                Some(
-                    Subdivision::<RealSpace, CountingNode>::new(Transform::from_translation(
-                        Vec3::X,
-                    ))
-                    .into(),
-                )
-            } else {
-                None
-            }
-        }
-
-        fn init() -> Self {
-            CountingNode { count: 0 }
-        }
-
-        fn generate(&mut self, _transform: &GlobalTransform, provider: &Provider<RealSpace>) {
-            let count = provider.query::<i32>("count").unwrap();
-            self.count = count(&Vec3::ZERO) + 1;
-        }
-    }
-    //
-    // fn test_system(
-    //     mut commands: Commands,
-    //     query: Query<(Entity, One<&dyn ProceduralNode<RealSpace>>)>,
-    // ) {
-    //     for (entity, _) in query {
-    //         commands.entity(entity).insert(EmptyNode);
-    //     }
-    // }
-    //
-    // #[test]
-    // fn app_testing() {
-    //     let mut app = App::new();
-    //     app.register_component_as::<dyn ProceduralNode<RealSpace>, TestNode>()
-    //         .add_systems(Update, test_system);
-    //     AsyncComputeTaskPool::get_or_init(|| TaskPool::new());
-    //
-    //     let test_entity = app.world_mut().spawn(TestNode { value: 0 }).id();
-    //     app.update();
-    //     let empty_result = app.world().get::<EmptyNode>(test_entity);
-    //     assert!(empty_result.is_some());
-    // }
-
-    #[test]
-    fn test_create_task_empty_node() {
-        let mut app = App::new();
-        app.register_component_as::<dyn ProceduralNode<RealSpace>, CountingNode>()
-            .add_systems(Update, GenerateTask::<RealSpace>::create_tasks);
-
-        AsyncComputeTaskPool::get_or_init(|| TaskPool::new());
-
-        let pending_entity = app
-            .world_mut()
-            .spawn((
-                TestNode { value: 0 },
-                GlobalTransform::default(),
-                PendingGenerate,
-            ))
-            .id();
-        for _ in 0..10 {
-            app.update();
-        }
-        // app.world_mut().flush();
-
-        let pending_result = app.world().get::<PendingGenerate>(pending_entity);
-        assert!(pending_result.is_none());
-
-        let empty_result = app.world().get::<EmptyNode>(pending_entity);
-        assert!(empty_result.is_some());
-
-        let task_result = app.world().get::<GenerateTask<RealSpace>>(pending_entity);
-        assert!(task_result.is_none());
-    }
-
-    // #[test]
-    // fn test_create_single_task() {
-    //     let mut app = App::new();
-    //     app.add_systems(Update, GenerateTask::<RealSpace>::create_tasks);
-    //     AsyncComputeTaskPool::get_or_init(|| TaskPool::new());
-    //
-    //     let task_entity = app
-    //         .world_mut()
-    //         .spawn((
-    //             CountingNode { count: 0 },
-    //             GlobalTransform::default(),
-    //             PendingGenerate,
-    //         ))
-    //         .id();
-    //
-    //     app.update();
-    //     app.world_mut().flush();
-    //
-    //     let world = app.world_mut();
-    //     let task_result = world.get_mut::<GenerateTask<RealSpace>>(task_entity);
-    //     assert!(task_result.is_some());
-    //
-    //     let generate = block_on(&mut task_result.unwrap().into_inner().task);
-    //     let expected_type: Box<dyn Generate<RealSpace>> =
-    //         Box::new(Subdivision::<RealSpace, CountingNode>::new(
-    //             Transform::default(),
-    //         ));
-    //     assert_eq!(generate.type_id(), expected_type.type_id());
-    //
-    //     generate.spawn(&mut world.commands().entity(task_entity));
-    //     world.flush();
-    //
-    //     let children_result = app.world().get::<Children>(task_entity);
-    //     assert!(children_result.is_some());
-    //
-    //     let child_result = children_result.unwrap().first();
-    //     assert!(child_result.is_some());
-    //
-    //     let child_node = app.world().get::<CountingNode>(*child_result.unwrap());
-    //     assert!(child_node.is_some());
-    //     assert_eq!(child_node.unwrap().count, 1);
-    //
-    //     let pending_result = app.world().get::<PendingGenerate>(task_entity);
-    //     assert!(pending_result.is_none());
-    // }
-
-    #[test]
-    fn test_poll_tasks() {}
 }

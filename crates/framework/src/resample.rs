@@ -1,5 +1,5 @@
-use super::{EmptyNode, PendingGenerate, Space};
-use crate::ProceduralNode;
+use super::{PendingGenerate, Space};
+use crate::provides::PodProvides;
 use bevy::{platform::collections::HashSet, prelude::*};
 use std::{collections::VecDeque, marker::PhantomData};
 
@@ -157,24 +157,22 @@ impl<S: Space> Thresholds<S> {
     /// System that triggers subdivision or collapse of procedural nodes based on
     /// their noticeability relative to the current thresholds.
     ///
-    /// For each leaf node (no children, not marked empty):
+    /// For each leaf node (no children):
     /// - If noticeability > upper threshold: mark for subdivision
     ///
     /// For all nodes:
     /// - If noticeability < lower threshold: despawn all children
+    ///
+    /// Note: Since `ProceduralNode` is space-agnostic, we use `PodProvides` to identify
+    /// procedural nodes and require the space's GlobalTransform component.
     pub(crate) fn resample(
         mut commands: Commands,
         thresholds: Res<Thresholds<S>>,
         leaves: Query<
-            (
-                Entity,
-                One<&dyn ProceduralNode<S>>,
-                &S::GlobalTransform,
-                Option<&ChildOf>,
-            ),
-            (Without<Children>, Without<EmptyNode>),
+            (Entity, &PodProvides, &S::GlobalTransform, Option<&ChildOf>),
+            Without<Children>,
         >,
-        nodes: Query<(Entity, One<&dyn ProceduralNode<S>>, &S::GlobalTransform)>,
+        nodes: Query<(Entity, &PodProvides, &S::GlobalTransform)>,
         viewers: Query<(&Viewer<S>, &S::GlobalTransform)>,
     ) {
         let priority = |node_transform: &S::GlobalTransform| {
@@ -188,14 +186,19 @@ impl<S: Space> Thresholds<S> {
 
         let mut leaves_once_removed = HashSet::new();
 
-        for (entity, _, node_transform, child_of) in leaves {
+        for (entity, pod_provides, node_transform, child_of) in leaves.iter() {
             child_of.map(|child_of| leaves_once_removed.insert(child_of.parent()));
+
+            // Only mark for subdivision if the node can actually subdivide
             if priority(node_transform) > thresholds.upper {
-                commands.entity(entity).insert(PendingGenerate);
+                // Check if this node has any subdivisions to offer
+                if pod_provides.subdivide().is_some() {
+                    commands.entity(entity).insert(PendingGenerate);
+                }
             }
         }
 
-        for (entity, _node, node_transform) in nodes {
+        for (entity, _pod_provides, node_transform) in nodes.iter() {
             if priority(node_transform) < thresholds.lower {
                 commands.entity(entity).despawn_children();
             }
