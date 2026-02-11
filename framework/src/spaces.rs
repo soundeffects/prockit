@@ -1,79 +1,55 @@
 use bevy::prelude::*;
 
 /// The `Space` trait defines the conceptual space in which procedural generation operates.
-/// One might imagine physical space as a 3D space, images as a 2D space, audio as 1D space,
-/// and so on. As long as elements have a position and can be transformed in the space, it can
-/// support procedural generation.
-///
-/// # Associated Types
-/// * `Position` - The coordinate type used for spatial sampling (e.g., `Vec3`)
-/// * `GlobalTransform` - Component type for world-space transforms
-/// * `LocalTransform` - Component type for parent-relative transforms
-/// * `LocalRegion` - Describes a local region in the space (e.g., AABB for 3D)
-/// * `PlacementType` - Identifies placement strategies for this space
+/// This includes any number of Euclidean spaces of arbitrary dimensions, and any space which
+/// defines transforms.
 ///
 /// # Example
 /// ```
 /// # use prockit_framework::{Space};
-/// struct OneDimension;
+/// # use bevy::prelude::*;
+/// struct RealSpace;
 ///
-/// struct OneTransform {
-///     scale: f32,
-///     translation: f32
-/// }
+/// impl Space for RealSpace {
+///     type Position = Vec3;
+///     type GlobalTransform = GlobalTransform;
+///     type LocalTransform = Transform;
+///     type Region = Sphere;
+///     type PlacementType = // enum list...
+/// # ();
 ///
-/// impl Space for OneDimension {
-///     type Position = f32;
-///     type GlobalTransform = OneTransform;
-///     type LocalTransform = OneTransform;
-///
-///     fn noticeability(node: &OneTransform, viewer: &OneTransform) -> f32 {
-///         node.scale / (node.translation - viewer.translation).abs()
+///     fn noticeability(node: &GlobalTransform, viewer: &GlobalTransform) -> f32 {
+///         unimplemented!()
 ///     }
 ///
-///     fn push_transform(parent: &OneTransform, child: &OneTransform) -> OneTransform {
-///         OneTransform {
-///             scale: parent.scale * child.scale,
-///             translation parent.translation + child.translation
-///         }
+///     fn push_transform(parent: &GlobalTransform, child: &Transform) -> GlobalTransform {
+///         unimplemented!()
 ///     }
 /// }
 /// ```
 pub trait Space: Clone + Send + Sync + 'static {
-    /// A type definition for sampling functions in `Provider`s to use as input.
+    /// The coordinate type used for spatial sampling (e.g. [`Vec3`] for 3D space)
     type Position;
 
-    /// The component type for world-space (global) transforms.
-    /// Must be a Bevy component that can be cloned and has a sensible default.
+    /// A [`Component`] for world-space transforms (e.g. [`GlobalTransform`] for 3D)
     type GlobalTransform: Component + Clone + Default;
 
-    /// The component type for parent-relative (local) transforms.
-    /// Must be a Bevy component that can be cloned and has a sensible default.
+    /// A [`Component`] for parent-relative transforms (e.g. [`Transform`] for 3D)
     type LocalTransform: Component + Clone + Default;
 
-    /// Describes a local region in this space (e.g., AABB for 3D space).
-    /// Used by placements to specify the area a child node governs.
+    /// Describes a region of space a [`ProceduralNode`] governs (e.g., [`Sphere`] for 3D)
     type LocalRegion: Clone + Default + Send + Sync + 'static;
 
-    /// Identifies placement strategies for this space.
-    /// Each space defines its own set of valid placement types.
-    type PlacementType: Clone + Copy + Eq + std::hash::Hash + Send + Sync + 'static;
+    /// An `enum` type of placement strategies (e.g. scattering vs subdivision)
+    type PlacementType: Clone + Copy + PartialEq + Eq + Send + Sync + 'static;
 
-    /// Returns all valid placement types for this space.
-    fn placement_types() -> &'static [Self::PlacementType];
-
-    /// Computes the "noticeability" of a node from a viewer's perspective. This usually uses
-    /// a combination of distance from viewers, scale of procedural node, and priority of
-    /// viewers to create a noticeability score.
-    ///
-    /// The scale of noticeability depends on the implementation, but higher values mean greater
-    /// noticeability.
-    ///
-    /// # Example
+    /// Computes the "noticeability" of a [`ProceduralNode`] from a viewer's perspective. Depending
+    /// on the implementation, thi usually uses a combination of distance from viewers and the scale
+    /// of the procedural node
     fn noticeability(node: &Self::GlobalTransform, viewer: &Self::GlobalTransform) -> f32;
 
-    /// Composes a parent's global transform with a child's local transform to produce
-    /// the child's global transform.
+    /// Composes a child's global transform from its local transform and the parent's global
+    /// transform
     fn push_transform(
         parent: &Self::GlobalTransform,
         child: &Self::LocalTransform,
@@ -82,15 +58,21 @@ pub trait Space: Clone + Send + Sync + 'static {
 
 /// Placement types for [`RealSpace`], representing different strategies for placing
 /// child nodes in 3D space.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RealSpacePlacement {
-    /// Octree-style volume division - subdivides a volume into smaller volumes
+    /// `VolumeSubdivide` strategy semantically allows children of any [`ProceduralNode`] type which
+    /// represents volumes to be spawned to cover the region of the parent node
     VolumeSubdivide,
-    /// Logical subdivision at node level
+    /// `NodeSubdivide` strategy semantically mandates that only [`ProceduralNode`]s of the same
+    /// type as the parent node are allowed as children
     NodeSubdivide,
-    /// Random points scattered within a volume
+    /// `VolumeScatter` allows nodes to be placed in random subregions, semantically indicating to
+    /// the children that they may be at any point inside the opaque volume (usually solid material)
+    /// of the parent node
     VolumeScatter,
-    /// Random points scattered on surfaces
+    /// `SurfaceScatter` allows nodes to be placed in random subregions, semantically indicating to
+    /// the children that they are specifically near the surface (bordering on some transparent
+    /// medium, like air) of a parent node.
     SurfaceScatter,
 }
 
@@ -125,15 +107,6 @@ impl Space for RealSpace {
     type LocalTransform = Transform;
     type LocalRegion = RealSpaceRegion;
     type PlacementType = RealSpacePlacement;
-
-    fn placement_types() -> &'static [Self::PlacementType] {
-        &[
-            RealSpacePlacement::VolumeSubdivide,
-            RealSpacePlacement::NodeSubdivide,
-            RealSpacePlacement::VolumeScatter,
-            RealSpacePlacement::SurfaceScatter,
-        ]
-    }
 
     fn noticeability(node: &GlobalTransform, viewer: &GlobalTransform) -> f32 {
         node.scale().max_element() / viewer.translation().distance_squared(node.translation())
